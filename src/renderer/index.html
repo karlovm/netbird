@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetBird Browser</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <div class="title-bar">
+      <div class="title-bar-controls">
+        <span class="app-title">NetBird</span>
+      </div>
+    </div>
+    
+    <div class="main-content">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <button class="new-tab-btn" id="newTabBtn">
+            <svg width="16" height="16" viewBox="0 0 16 16">
+              <path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </button>
+          <div class="sidebar-actions">
+            <button class="action-btn" id="historyBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M8 2C11.314 2 14 4.686 14 8C14 11.314 11.314 14 8 14C4.686 14 2 11.314 2 8C2 6.5 2.5 5.1 3.4 4" stroke="currentColor" stroke-width="2" fill="none"/>
+                <path d="M8 4V8L11 11" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            <button class="action-btn" id="bookmarksBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M3 2V14L8 10L13 14V2H3Z" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            <button class="action-btn" id="extensionsBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M8 2L10 6L14 6L11 9L12 14L8 11L4 14L5 9L2 6L6 6L8 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        <div class="tabs-container" id="tabsContainer">
+          <!-- Vertical tabs will be added here -->
+        </div>
+        
+        <div class="sidebar-panel" id="sidebarPanel">
+          <!-- History, bookmarks, extensions panels -->
+        </div>
+      </div>
+      
+      <div class="content-area">
+        <div class="address-bar">
+          <div class="navigation-controls">
+            <button class="nav-btn" id="backBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M10 2L4 8L10 14" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            <button class="nav-btn" id="forwardBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M6 2L12 8L6 14" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+            <button class="nav-btn" id="refreshBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M14 8C14 11.314 11.314 14 8 14C4.686 14 2 11.314 2 8C2 4.686 4.686 2 8 2C10.5 2 12.5 3.5 13.5 5.5M13.5 5.5V2M13.5 5.5H10" stroke="currentColor" stroke-width="2" fill="none"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="url-input-container">
+            <input type="text" class="url-input" id="urlInput" placeholder="Enter URL or search...">
+            <button class="secure-indicator" id="secureIndicator">
+              <svg width="14" height="14" viewBox="0 0 14 14">
+                <path d="M3.5 6V4.5C3.5 2.5 5 1 7 1C9 1 10.5 2.5 10.5 4.5V6M2 6H12V12H2V6Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="extension-actions" id="extensionActions"></div>
+        </div>
+        
+        <div class="webview-container" id="webviewContainer">
+          <div class="welcome-screen" id="welcomeScreen">
+            <div class="welcome-content">
+              <h1>Welcome to NetBird</h1>
+              <p>Your fast, secure, and modern browser</p>
+              <div class="quick-actions">
+                <button class="quick-action" onclick="createNewTab('https://google.com')">
+                  <svg width="24" height="24" viewBox="0 0 24 24">
+                    <path d="M21 16V8C21 6.9 20.1 6 19 6H5C3.9 6 3 6.9 3 8V16C3 17.1 3.9 18 5 18H19C20.1 18 21 17.1 21 16Z" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M7 10L12 13L17 10" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                  Search
+                </button>
+                <button class="quick-action" onclick="showHistory()">
+                  <svg width="24" height="24" viewBox="0 0 24 24">
+                    <path d="M12 2C17.523 2 22 6.477 22 12C22 17.523 17.523 22 12 22C6.477 22 2 17.523 2 12C2 7.5 5 3.5 9 2.5" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M12 6V12L16 16" stroke="currentColor" stroke-width="2" fill="none"/>
+                  </svg>
+                  History
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <script src="app.js"></script>
+  </body>
+</html>

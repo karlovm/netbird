@@ -1,0 +1,33 @@
+{
+  "name": "netbird-browser",
+  "version": "0.0.1",
+  "description": "netbird - a modern electron-based browser",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "keywords": [
+    "browser",
+    "electron",
+    "netbird"
+  ],
+  "build": {
+    "asarUnpack": [
+      "**/preload.js"
+    ]
+  },
+  "author": "NetBird Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^23.6.0"
+  },
+  "dependencies": {
+    "electron-chrome-extensions": "^4.9.0",
+    "electron-store": "^8.1.0",
+    "path": "^0.12.7"
+  }
+}
