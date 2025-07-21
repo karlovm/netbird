@@ -1,3 +1,5 @@
+// renderer\app.js
+
 class NetBirdApp {
     constructor() {
         this.tabs = new Map();
@@ -15,6 +17,42 @@ class NetBirdApp {
         this.bindEvents();
         await this.loadData();
         this.createInitialTab();
+        this.setupResizer();
+        this.setupWindowControls();
+    }
+
+    setupWindowControls() {
+        document.getElementById('minimizeBtn').addEventListener('click', () => {
+            window.electronAPI.minimizeWindow();
+        });
+        document.getElementById('maximizeBtn').addEventListener('click', () => {
+            window.electronAPI.maximizeWindow();
+        });
+        document.getElementById('closeBtn').addEventListener('click', () => {
+            window.electronAPI.closeWindow();
+        });
+    }
+
+    setupResizer() {
+        const resizer = document.querySelector('.resizer');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', () => {
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const sidebar = document.querySelector('.sidebar');
+            const newWidth = document.body.clientWidth - e.clientX;
+            sidebar.style.width = `${Math.max(50, Math.min(500, newWidth))}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            document.body.style.cursor = 'default';
+        });
     }
 
     bindEvents() {
@@ -112,16 +150,15 @@ class NetBirdApp {
         const tabElement = document.createElement('div');
         tabElement.className = 'tab-item';
         tabElement.dataset.tabId = tab.id;
-
         tabElement.innerHTML = `
-            <img class="tab-favicon" src="${tab.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="%23999"/></svg>'}" alt="">
-            <span class="tab-title">${tab.title}</span>
-            <button class="tab-close" onclick="app.closeTab('${tab.id}')">
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                    <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" stroke-width="2"/>
-                </svg>
-            </button>
-        `;
+    <img class="tab-favicon" src="${tab.favicon || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22><circle cx=%228%22 cy=%228%22 r=%226%22 fill=%22%23999%22/></svg>'}" alt="">
+    <span class="tab-title">${tab.title}</span>
+    <button class="tab-close" onclick="app.closeTab('${tab.id}')">
+        <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" stroke-width="2"/>
+        </svg>
+    </button>
+`;
 
         tabElement.addEventListener('click', (e) => {
             if (!e.target.closest('.tab-close')) {
@@ -524,9 +561,9 @@ class NetBirdApp {
                 }
                 const iconUrl = extension.icon ? extension.icon : `file://${extension.path}/${iconPath}`;
                 button.innerHTML = `
-                    <img src="${iconUrl}" 
-                         width="16" height="16" alt="${extension.name}"
-                         onerror="this.src='data:image/svg+xml,<svg xmlns=\\"http://www.w3.org/2000/svg\\" width=\\"16\\" height=\\"16\\" viewBox=\\"0 0 16 16\\"><rect width=\\"16\\" height=\\"16\\" fill=\\"%23666\\"/></svg>'">
+                <img src="${iconUrl}" 
+                    width="16" height="16" alt="${extension.name}"
+                    onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cmVjdCB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIGZpbGw9IiM2NjYiLz48L3N2Zz4='">
                 `;
                 button.addEventListener('click', () => {
                     this.showExtensionPopup(extension.id);
@@ -595,43 +632,43 @@ class NetBirdApp {
         }
     }
 
- async injectContentScripts(webview, url) {
-    try {
-        for (const extension of this.extensions) {
-            if (!extension.enabled) continue;
+    async injectContentScripts(webview, url) {
+        try {
+            for (const extension of this.extensions) {
+                if (!extension.enabled) continue;
 
-            const contentScripts = extension.manifest.content_scripts || [];
+                const contentScripts = extension.manifest.content_scripts || [];
 
-            for (const script of contentScripts) {
-                if (this.matchesUrl(url, script.matches)) {
-                    if (script.css) {
-                        for (const cssFile of script.css) {
-                            try {
-                                const cssContent = await window.electronAPI.getExtensionFileContent(extension.id, cssFile);
-                                await webview.insertCSS(cssContent);
-                            } catch (error) {
-                                console.error('Failed to inject CSS:', cssFile, error);
+                for (const script of contentScripts) {
+                    if (this.matchesUrl(url, script.matches)) {
+                        if (script.css) {
+                            for (const cssFile of script.css) {
+                                try {
+                                    const cssContent = await window.electronAPI.getExtensionFileContent(extension.id, cssFile);
+                                    await webview.insertCSS(cssContent);
+                                } catch (error) {
+                                    console.error('Failed to inject CSS:', cssFile, error);
+                                }
                             }
                         }
-                    }
 
-                    if (script.js) {
-                        await this.injectExtensionAPIs(webview, extension, url);
-                        for (const jsFile of script.js) {
-                            try {
-                                const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
-                                
-                                // Validate content before injection
-                                if (!jsContent || jsContent.trim() === '') {
-                                    console.warn('Empty or invalid script content for:', jsFile);
-                                    continue;
-                                }
-                                
-                                console.log(`Attempting to inject ${jsFile} for extension ${extension.id}`);
-                                console.log('Script content preview:', jsContent.substring(0, 300));
-                                
-                                // Create a more robust injection method
-                                const injectionCode = `
+                        if (script.js) {
+                            await this.injectExtensionAPIs(webview, extension, url);
+                            for (const jsFile of script.js) {
+                                try {
+                                    const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
+
+                                    // Validate content before injection
+                                    if (!jsContent || jsContent.trim() === '') {
+                                        console.warn('Empty or invalid script content for:', jsFile);
+                                        continue;
+                                    }
+
+                                    console.log(`Attempting to inject ${jsFile} for extension ${extension.id}`);
+                                    console.log('Script content preview:', jsContent.substring(0, 300));
+
+                                    // Create a more robust injection method
+                                    const injectionCode = `
                                     (function() {
                                         try {
                                             console.log('Injecting content script: ${jsFile}');
@@ -661,68 +698,68 @@ class NetBirdApp {
                                         }
                                     })();
                                 `;
-                                
-                                await webview.executeJavaScript(injectionCode);
-                                console.log('Successfully injected wrapper for:', jsFile);
-                                
-                            } catch (error) {
-                                console.error('Failed to inject JS:', jsFile, error);
-                                console.error('Extension:', extension.id);
-                                console.error('URL:', url);
-                                
-                                // Try to get more details about the error
-                                if (error.message.includes('Script failed to execute')) {
-                                    console.error('This usually means there\'s a syntax error or runtime error in the script');
-                                    console.error('Consider checking the content script for:');
-                                    console.error('- Syntax errors');
-                                    console.error('- Missing dependencies');
-                                    console.error('- DOM elements that don\'t exist yet');
-                                    console.error('- Async operations without proper handling');
+
+                                    await webview.executeJavaScript(injectionCode);
+                                    console.log('Successfully injected wrapper for:', jsFile);
+
+                                } catch (error) {
+                                    console.error('Failed to inject JS:', jsFile, error);
+                                    console.error('Extension:', extension.id);
+                                    console.error('URL:', url);
+
+                                    // Try to get more details about the error
+                                    if (error.message.includes('Script failed to execute')) {
+                                        console.error('This usually means there\'s a syntax error or runtime error in the script');
+                                        console.error('Consider checking the content script for:');
+                                        console.error('- Syntax errors');
+                                        console.error('- Missing dependencies');
+                                        console.error('- DOM elements that don\'t exist yet');
+                                        console.error('- Async operations without proper handling');
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        } catch (error) {
+            console.error('Failed to inject content scripts:', error);
         }
-    } catch (error) {
-        console.error('Failed to inject content scripts:', error);
     }
-}
 
-// Alternative method using try-catch for script validation
-async injectContentScriptsSafe(webview, url) {
-    try {
-        for (const extension of this.extensions) {
-            if (!extension.enabled) continue;
+    // Alternative method using try-catch for script validation
+    async injectContentScriptsSafe(webview, url) {
+        try {
+            for (const extension of this.extensions) {
+                if (!extension.enabled) continue;
 
-            const contentScripts = extension.manifest.content_scripts || [];
+                const contentScripts = extension.manifest.content_scripts || [];
 
-            for (const script of contentScripts) {
-                if (this.matchesUrl(url, script.matches)) {
-                    if (script.js) {
-                        await this.injectExtensionAPIs(webview, extension, url);
-                        for (const jsFile of script.js) {
-                            try {
-                                const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
-                                
-                                // Validate content
-                                if (!jsContent || jsContent.trim() === '') {
-                                    console.warn('Empty script content for:', jsFile);
-                                    continue;
-                                }
-                                
-                                // Test script syntax before injection
+                for (const script of contentScripts) {
+                    if (this.matchesUrl(url, script.matches)) {
+                        if (script.js) {
+                            await this.injectExtensionAPIs(webview, extension, url);
+                            for (const jsFile of script.js) {
                                 try {
-                                    new Function(jsContent);
-                                    console.log('Script syntax validation passed for:', jsFile);
-                                } catch (syntaxError) {
-                                    console.error('Script syntax error in', jsFile, ':', syntaxError);
-                                    continue;
-                                }
-                                
-                                // Use a more careful injection approach
-                                const safeInjectionCode = `
+                                    const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
+
+                                    // Validate content
+                                    if (!jsContent || jsContent.trim() === '') {
+                                        console.warn('Empty script content for:', jsFile);
+                                        continue;
+                                    }
+
+                                    // Test script syntax before injection
+                                    try {
+                                        new Function(jsContent);
+                                        console.log('Script syntax validation passed for:', jsFile);
+                                    } catch (syntaxError) {
+                                        console.error('Script syntax error in', jsFile, ':', syntaxError);
+                                        continue;
+                                    }
+
+                                    // Use a more careful injection approach
+                                    const safeInjectionCode = `
                                     (function() {
                                         'use strict';
                                         
@@ -761,72 +798,72 @@ async injectContentScriptsSafe(webview, url) {
                                         }
                                     })();
                                 `;
-                                
-                                await webview.executeJavaScript(safeInjectionCode);
-                                console.log('Successfully injected:', jsFile);
-                                
-                            } catch (error) {
-                                console.error('Injection failed for:', jsFile, error);
+
+                                    await webview.executeJavaScript(safeInjectionCode);
+                                    console.log('Successfully injected:', jsFile);
+
+                                } catch (error) {
+                                    console.error('Injection failed for:', jsFile, error);
+                                }
                             }
                         }
                     }
                 }
             }
+        } catch (error) {
+            console.error('Content script injection failed:', error);
         }
-    } catch (error) {
-        console.error('Content script injection failed:', error);
     }
-}
 
-// Debug method to inspect what's actually in the content script
-async debugContentScript(extensionId, jsFile) {
-    try {
-        const jsContent = await window.electronAPI.getExtensionFileContent(extensionId, jsFile);
-        console.log('=== DEBUG CONTENT SCRIPT ===');
-        console.log('Extension:', extensionId);
-        console.log('File:', jsFile);
-        console.log('Content length:', jsContent.length);
-        console.log('Content preview:', jsContent.substring(0, 500));
-        console.log('Contains import:', /\bimport\b/.test(jsContent));
-        console.log('Contains export:', /\bexport\b/.test(jsContent));
-        console.log('Contains require:', /\brequire\b/.test(jsContent));
-        console.log('Contains chrome.*:', /chrome\.\w+/.test(jsContent));
-        console.log('Contains browser.*:', /browser\.\w+/.test(jsContent));
-        console.log('==============================');
-        
-        // Try to parse as JavaScript to check for syntax errors
+    // Debug method to inspect what's actually in the content script
+    async debugContentScript(extensionId, jsFile) {
         try {
-            new Function(jsContent);
-            console.log('✓ Script syntax is valid');
-        } catch (syntaxError) {
-            console.error('✗ Script syntax error:', syntaxError);
+            const jsContent = await window.electronAPI.getExtensionFileContent(extensionId, jsFile);
+            console.log('=== DEBUG CONTENT SCRIPT ===');
+            console.log('Extension:', extensionId);
+            console.log('File:', jsFile);
+            console.log('Content length:', jsContent.length);
+            console.log('Content preview:', jsContent.substring(0, 500));
+            console.log('Contains import:', /\bimport\b/.test(jsContent));
+            console.log('Contains export:', /\bexport\b/.test(jsContent));
+            console.log('Contains require:', /\brequire\b/.test(jsContent));
+            console.log('Contains chrome.*:', /chrome\.\w+/.test(jsContent));
+            console.log('Contains browser.*:', /browser\.\w+/.test(jsContent));
+            console.log('==============================');
+
+            // Try to parse as JavaScript to check for syntax errors
+            try {
+                new Function(jsContent);
+                console.log('✓ Script syntax is valid');
+            } catch (syntaxError) {
+                console.error('✗ Script syntax error:', syntaxError);
+            }
+
+            return jsContent;
+        } catch (error) {
+            console.error('Failed to debug content script:', error);
+            return null;
         }
-        
-        return jsContent;
-    } catch (error) {
-        console.error('Failed to debug content script:', error);
-        return null;
     }
-}
 
-// Method to enable console message forwarding from webview
-enableConsoleDebugging(webview) {
-    webview.addEventListener('console-message', (e) => {
-        console.log(`[WebView Console] [${e.level}] ${e.message}`);
-        if (e.sourceId) {
-            console.log(`[WebView Console] Source: ${e.sourceId}:${e.line}`);
-        }
-    });
-    
-    webview.addEventListener('dom-ready', () => {
-        console.log('WebView DOM ready');
-    });
-}
+    // Method to enable console message forwarding from webview
+    enableConsoleDebugging(webview) {
+        webview.addEventListener('console-message', (e) => {
+            console.log(`[WebView Console] [${e.level}] ${e.message}`);
+            if (e.sourceId) {
+                console.log(`[WebView Console] Source: ${e.sourceId}:${e.line}`);
+            }
+        });
 
-// Method to check if content script dependencies are available
-async checkContentScriptDependencies(webview, extensionId) {
-    try {
-        const checkCode = `
+        webview.addEventListener('dom-ready', () => {
+            console.log('WebView DOM ready');
+        });
+    }
+
+    // Method to check if content script dependencies are available
+    async checkContentScriptDependencies(webview, extensionId) {
+        try {
+            const checkCode = `
             (function() {
                 const report = {
                     chrome: typeof chrome !== 'undefined',
@@ -843,15 +880,15 @@ async checkContentScriptDependencies(webview, extensionId) {
                 return report;
             })();
         `;
-        
-        const result = await webview.executeJavaScript(checkCode);
-        console.log('Environment check result:', result);
-        return result;
-    } catch (error) {
-        console.error('Failed to check content script dependencies:', error);
-        return null;
+
+            const result = await webview.executeJavaScript(checkCode);
+            console.log('Environment check result:', result);
+            return result;
+        } catch (error) {
+            console.error('Failed to check content script dependencies:', error);
+            return null;
+        }
     }
-}
     async loadExtension() {
         try {
             if (window.electronAPI) {

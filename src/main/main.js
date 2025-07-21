@@ -1,4 +1,4 @@
-// main\main.js
+// main\main.js (modified)
 
 const { app, BrowserWindow, ipcMain, session, dialog, Menu, shell } = require('electron');
 const path = require('path');
@@ -53,9 +53,9 @@ class NetBirdBrowser {
         experimentalFeatures: true,
         sandbox: false
       },
-      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-      show: false,
-      frame: true
+      titleBarStyle: 'hidden',
+      frame: false,
+      show: false
     });
 
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -182,9 +182,6 @@ class NetBirdBrowser {
       await netbird.extensionManager.setStorage(extensionId, items);
       return { success: true };
     });
-
-  // Update in main\main.js
-// Replace the ipcMain.handle('get-extension-api-script', ...) with this:
 
 ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl = '') => {
   try {
@@ -379,6 +376,28 @@ ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl
     ipcMain.handle('webview-permission', async (event, permission, origin) => {
       console.log('Webview permission requested:', permission, 'for:', origin);
       return true;
+    });
+
+    // Add window control IPC handlers
+    ipcMain.on('minimize-window', (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) win.minimize();
+    });
+
+    ipcMain.on('maximize-window', (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) {
+        if (win.isMaximized()) {
+          win.unmaximize();
+        } else {
+          win.maximize();
+        }
+      }
+    });
+
+    ipcMain.on('close-window', (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (win) win.close();
     });
   }
 
