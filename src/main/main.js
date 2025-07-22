@@ -20,7 +20,7 @@ class NetBirdBrowser {
       this.createMainWindow();
       this.setupIPC();
       this.setupMenu();
-      await this.loadExtensions();  // Await this as well for consistency
+      await this.loadExtensions();
     });
 
     app.on('window-all-closed', () => {
@@ -67,6 +67,18 @@ class NetBirdBrowser {
       }
     });
 
+    mainWindow.webContents.on("did-attach-webview", (_, contents) => {
+      contents.setWindowOpenHandler((details) => {
+
+        let url = details.url;
+        if (url.length > 0) {
+          mainWindow.webContents.send('create-new-tab', { url: url });
+        }
+
+        return { action: 'deny' }
+      })
+    })
+
     mainWindow.on('closed', () => {
       this.windows.delete('main');
     });
@@ -81,10 +93,135 @@ class NetBirdBrowser {
   }
 
   setupIPC() {
-    ipcMain.handle('create-tab', async (event, url) => {
-      console.log('Creating tab with URL:', url);
-      return { success: true, tabId: 'tab-' + Date.now() };
+
+
+    // Webview key event handler
+    ipcMain.handle('webview-key-event', async (event, tabId, keyEventData) => {
+      try {
+        alert(123)
+        console.log(`Webview key event from tab ${tabId}:`, keyEventData);
+
+        // Get the window that sent this event
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const windowId = this.getWindowId(win);
+
+        if (!windowId) {
+          console.error('Could not identify window for key event');
+          return { success: false };
+        }
+
+        // Store/update the key event data
+        const windowHandlers = this.webviewKeyEventHandlers.get(windowId);
+        if (windowHandlers) {
+          windowHandlers.set(tabId, {
+            lastKeyEvent: keyEventData,
+            timestamp: Date.now()
+          });
+        }
+
+        // Handle specific key combinations or patterns here
+        await this.handleWebviewKeyEvent(windowId, tabId, keyEventData);
+
+        return { success: true };
+      } catch (error) {
+        console.error('Error handling webview key event:', error);
+        return { success: false, error: error.message };
+      }
     });
+
+    // Register key event handler
+    ipcMain.handle('register-webview-key-handler', async (event, tabId, handlerName) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const windowId = this.getWindowId(win);
+
+        if (!windowId) {
+          return { success: false, error: 'Window not found' };
+        }
+
+        console.log(`Registered key handler "${handlerName}" for tab ${tabId} in window ${windowId}`);
+        return { success: true };
+      } catch (error) {
+        console.error('Error registering key handler:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // Get key event history for a tab
+    ipcMain.handle('get-webview-key-history', async (event, tabId, limit = 10) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const windowId = this.getWindowId(win);
+
+        if (!windowId) {
+          return { success: false, error: 'Window not found' };
+        }
+
+        const windowHandlers = this.webviewKeyEventHandlers.get(windowId);
+        const tabHandler = windowHandlers ? windowHandlers.get(tabId) : null;
+
+        return {
+          success: true,
+          data: tabHandler ? [tabHandler.lastKeyEvent] : []
+        };
+      } catch (error) {
+        console.error('Error getting key history:', error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // Window control handlers
+
+
+
+
+    ipcMain.handle('window-minimize', (event) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          win.minimize();
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('Error minimizing window:', error);
+        return false;
+      }
+    });
+
+    ipcMain.handle('window-maximize', (event) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          if (win.isMaximized()) {
+            win.unmaximize();
+          } else {
+            win.maximize();
+          }
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('Error maximizing window:', error);
+        return false;
+      }
+    });
+
+    ipcMain.handle('window-close', (event) => {
+      try {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+          win.close();
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('Error closing window:', error);
+        return false;
+      }
+    });
+
+
 
     ipcMain.handle('close-tab', async (event, tabId) => {
       console.log('Closing tab:', tabId);
@@ -173,29 +310,28 @@ class NetBirdBrowser {
         throw error;
       }
     });
-
     ipcMain.handle('extension-storage-get', async (event, extensionId, keys) => {
-      return netbird.extensionManager.getStorage(extensionId, keys);
+      return this.extensionManager.getStorage(extensionId, keys);
     });
 
     ipcMain.handle('extension-storage-set', async (event, extensionId, items) => {
-      await netbird.extensionManager.setStorage(extensionId, items);
+      await this.extensionManager.setStorage(extensionId, items);  // Changed from netbird.extensionManager
       return { success: true };
     });
 
-ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl = '') => {
-  try {
-    const extension = this.extensionManager.getExtension(extensionId);
-    if (!extension) {
-      throw new Error('Extension not found');
-    }
-    const safeExtension = JSON.parse(JSON.stringify(extension));
-    if (!safeExtension.manifest || typeof safeExtension.manifest !== 'object') {
-      throw new Error('Invalid extension manifest');
-    }
-    let manifestString = JSON.stringify(safeExtension.manifest);
-    const escapedCurrentUrl = currentUrl.replace(/'/g, "\\'");
-    const apiScript = `
+    ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl = '') => {
+      try {
+        const extension = this.extensionManager.getExtension(extensionId);
+        if (!extension) {
+          throw new Error('Extension not found');
+        }
+        const safeExtension = JSON.parse(JSON.stringify(extension));
+        if (!safeExtension.manifest || typeof safeExtension.manifest !== 'object') {
+          throw new Error('Invalid extension manifest');
+        }
+        let manifestString = JSON.stringify(safeExtension.manifest);
+        const escapedCurrentUrl = currentUrl.replace(/'/g, "\\'");
+        const apiScript = `
       (function() {
         try {
           window.chrome = window.chrome || {};
@@ -366,12 +502,12 @@ ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl
         }
       })();
     `;
-    return apiScript;
-  } catch (error) {
-    console.error('Failed to get extension api script:', error);
-    throw error;
-  }
-});
+        return apiScript;
+      } catch (error) {
+        console.error('Failed to get extension api script:', error);
+        throw error;
+      }
+    });
 
     ipcMain.handle('webview-permission', async (event, permission, origin) => {
       console.log('Webview permission requested:', permission, 'for:', origin);
@@ -412,7 +548,7 @@ ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl
             click: () => {
               const mainWindow = this.windows.get('main');
               if (mainWindow) {
-                mainWindow.webContents.send('create-new-tab');
+                // mainWindow.webContents.send('create-new-tab');
               }
             }
           },
@@ -485,3 +621,6 @@ ipcMain.handle('get-extension-api-script', async (event, extensionId, currentUrl
 
 const store = new Store();
 const netbird = new NetBirdBrowser();
+
+// Export the netbird instance for global access
+module.exports = { netbird };

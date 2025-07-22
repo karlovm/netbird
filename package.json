@@ -19,7 +19,7 @@
       "**/preload.js"
     ]
   },
-  "author": "NetBird Team",
+  "author": "eternity software",
   "license": "MIT",
   "devDependencies": {
     "electron": "^37.2.3",

@@ -1,18 +1,21 @@
 /* renderer\styles.css (modified) */
+@import url('https://fonts.googleapis.com/css2?family=Golos+Text:wght@400..900&display=swap');
 
 :root {
-    --primary-color: #2563eb;
-    --secondary-color: #1e40af;
-    --accent-color: #3b82f6;
+    --primary-color: #57A3FF;
+    --secondary-color: #BFDBFF;
+    --accent-color: #57A3FF;
+    --light-accent-color: #bfdbff6c;
     --bg-primary: #ffffff;
-    --bg-secondary: #f8fafc;
+    --bg-secondary: #a5a5a5a1;
+    --bg-secondary-light: #a5a5a52f;
     --bg-tertiary: #f1f5f9;
-    --text-primary: #1e293b;
-    --text-secondary: #64748b;
+    --text-primary: #2c2c2cd2;
+    --text-secondary: #585858b6;
     --border-color: #e2e8f0;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
-    --border-radius: 8px;
+    --tab-border-radius: 36px;
     --transition: all 0.2s ease;
 }
 
@@ -20,16 +23,19 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    font-family: "Golos Text", sans-serif;
+    font-weight: 600;
 }
 
 html,
 body {
     height: 100%;
     overflow: hidden;
+
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Golos Text DemiBold';
     background: var(--bg-primary);
     color: var(--text-primary);
 }
@@ -74,22 +80,36 @@ body {
 
 .window-controls {
     display: flex;
-    gap: 8px;
-    -webkit-app-region: no-drag;
+
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 2px;
+    border-radius: 30px;
+    z-index: 1000;
+    background: none;
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border-color);
+    transition: all 0.2s ease-in-out;
 }
 
+/* Common button styling */
 .window-btn {
     background: transparent;
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: var(--transition);
+    transition: background 0.2s ease;
+    border-radius: 20px;
+    font-size: 12px;
+    overflow: hidden;
 }
+
 
 .window-btn:hover {
     background: var(--bg-tertiary);
@@ -100,55 +120,196 @@ body {
     color: white;
 }
 
+/* Minimize and Maximize hidden by default */
+.window-btn.minimize,
+.window-btn.maximize {
+    opacity: 0;
+    transform: translateX(10px);
+    visibility: hidden;
+    width: 0;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+    transition:
+        opacity 0.2s ease,
+        transform 0.1s ease-in,
+        visibility 0s linear 0.2s,
+        width 0.2s ease,
+        padding 0.2s ease,
+        margin 0.2s ease;
+}
+
+/* Appear on hover */
+.window-controls:hover .window-btn.minimize,
+.window-controls:hover .window-btn.maximize {
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+    width: 28px;
+    padding: 0;
+    /* or small padding if needed */
+    margin: 0;
+    pointer-events: auto;
+    transition-delay: 0s;
+
+}
+
+
+.window-controls:hover {
+    background: rgba(248, 250, 252, 0.70);
+    /* Semi-transparent */
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border-color);
+}
+
+
+/* Staggered delay */
+.window-controls:hover .window-btn.minimize {
+    transition-delay: 0.05s;
+}
+
+.window-controls:hover .window-btn.maximize {
+    transition-delay: 0.1s;
+}
+
+/* Ordering (optional, if needed) */
+.window-btn.minimize {
+    order: 1;
+}
+
+.window-btn.maximize {
+    order: 2;
+}
+
+.window-btn.close {
+    order: 3;
+}
+
 .main-content {
     display: flex;
     flex: 1;
     min-height: 0;
     overflow: hidden;
 }
-
 .sidebar {
-    width: 250px;
-    background: var(--bg-secondary);
-    border-left: 1px solid var(--border-color);
-    /* Changed from border-right since now on right */
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    flex-shrink: 0;
+  position: relative; /* Required for absolute positioning of resizer */
+  width: 50px; /* Initial collapsed width */
+  transition: width 0.2s ease; /* Animation for collapse/expand */
+  overflow: hidden;
+}
+
+.sidebar.collapsed {
+  /* Width managed via JS, defaults to 50px */
 }
 
 .resizer {
-    width: 5px;
-    background: var(--border-color);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 10;
+  transition: all 0.2s ease-in-out;
+}
+
+.resizer:hover {
+  background: var(--primary-color); /* Or #007bff */
+   width: 6px;
+}
+
+.sidebar.resizing {
+  transition: none !important; /* Disable transition during resize */
+}
+
+.sidebar.collapsed .tab-title,
+.sidebar.collapsed .sidebar-actions button span {
+  display: none;
+}
+
+.sidebar.collapsed .new-tab-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.collapse-btn {
+    position: fixed;
+    right: 10px;
+    top: 45px;
+  background: var(--bg-secondary-light);
+  border: none;
+  height: 30px;
+  width: 30px;
+  display: flex;
+  justify-content: center;
+  cursor: pointer;
+  align-items: center;
+  display: flex;
+  text-align: center;
+  border-radius: 50px;
+  color: var(--text-color);
+  transition: all 0.2s ease-out;
+
+  img {
+    height: 16px;
+    width: 16px;
+  }
+
+}
+
+.sidebar.collapsed .collapse-btn {
+  transform: rotateY(180deg);
+}
+
+.sidebar-header,
+.tabs-container,
+.new-tab-btn,
+.sidebar-panel {
+  padding-left: 4px; /* Prevent overlap with resizer */
+}
+
+.resizer {
+    width: 4px;
+    background: none;
     cursor: col-resize;
     flex-shrink: 0;
+    position: absolute;
+    /* Stay within sidebar */
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 10;
+    /* Ensure it overlaps other sidebar content */
 }
 
 .sidebar-header {
     padding: 16px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
+    margin-top: 50px;
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
 }
 
 .new-tab-btn {
-    background: var(--primary-color);
-    color: white;
+    background: none;
+    color: var(--bg-secondary);
     border: none;
     padding: 8px 12px;
-    border-radius: var(--border-radius);
+    border-radius: var(--tab-border-radius);
     cursor: pointer;
     transition: var(--transition);
     display: flex;
     align-items: center;
     gap: 4px;
+    width: 100%;
+    justify-content: center;
 }
 
 .new-tab-btn:hover {
-    background: var(--secondary-color);
+     color: var(--secondary-color);
 }
 
 .sidebar-actions {
@@ -159,8 +320,8 @@ body {
 .action-btn {
     background: transparent;
     border: none;
-    padding: 8px;
-    border-radius: var(--border-radius);
+    padding: 4px;
+    border-radius: var(--tab-border-radius);
     cursor: pointer;
     color: var(--text-secondary);
     transition: var(--transition);
@@ -174,20 +335,26 @@ body {
 .tabs-container {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 4px;
     min-height: 0;
 }
+
+/* Add these styles to your existing CSS */
 
 .tab-item {
     display: flex;
     align-items: center;
-    padding: 12px 16px;
+    padding: 4px 6px;
     margin-bottom: 4px;
-    border-radius: var(--border-radius);
+    height: 30px;
+    border-radius: var(--tab-border-radius);
     cursor: pointer;
     transition: var(--transition);
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
+    min-width: 0;
+    /* Allow tabs to shrink */
+    position: relative;
 }
 
 .tab-item:hover {
@@ -195,9 +362,8 @@ body {
 }
 
 .tab-item.active {
-    background: var(--accent-color);
-    color: white;
-    border-color: var(--accent-color);
+    background: var(--light-accent-color);
+    border-color: var(--light-accent-color);
 }
 
 .tab-favicon {
@@ -205,6 +371,8 @@ body {
     height: 16px;
     margin-right: 8px;
     border-radius: 2px;
+    flex-shrink: 0;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
 .tab-title {
@@ -214,6 +382,7 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: var(--transition);
 }
 
 .tab-close {
@@ -222,12 +391,115 @@ body {
     padding: 4px;
     cursor: pointer;
     color: inherit;
-    opacity: 0.7;
-    transition: var(--transition);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    flex-shrink: 0;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 .tab-close:hover {
     opacity: 1;
+}
+
+/* Responsive behavior for narrow tabs */
+.tab-item {
+    container-type: inline-size;
+}
+
+/* When tab width is less than 100px */
+@container (max-width: 100px) {
+    .tab-item {
+        justify-content: center;
+        padding: 4px;
+        position: relative;
+    }
+
+    .tab-favicon {
+        margin: 0;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .tab-title {
+        display: none;
+    }
+
+    .tab-close {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        right: auto;
+        opacity: 0;
+        visibility: hidden;
+    }
+}
+
+/* Show close button on hover, hide favicon - synchronized timing */
+.tab-item:hover .tab-close {
+    visibility: visible;
+    opacity: 1;
+}
+
+@container (max-width: 100px) {
+    .tab-item:hover .tab-favicon {
+        opacity: 0;
+        visibility: hidden;
+    }
+
+    .tab-item:hover .tab-close {
+        opacity: 1;
+        visibility: visible;
+    }
+}
+
+/* Alternative approach using CSS custom properties if container queries aren't supported */
+.tab-item[data-narrow="true"] {
+    justify-content: center;
+    padding: 4px;
+    position: relative;
+}
+
+.tab-item[data-narrow="true"] .tab-favicon {
+    margin: 0;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1;
+    visibility: visible;
+}
+
+.tab-item[data-narrow="true"] .tab-title {
+    display: none;
+}
+
+.tab-item[data-narrow="true"] .tab-close {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    right: auto;
+    opacity: 0;
+    visibility: hidden;
+}
+
+.tab-item[data-narrow="true"]:hover .tab-favicon {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.tab-item[data-narrow="true"]:hover .tab-close {
+    opacity: 1;
+    visibility: visible;
 }
 
 .content-area {
@@ -239,20 +511,24 @@ body {
 .address-bar-con {
     display: flex;
     position: absolute;
-    bottom: 0;
+    bottom: 10px;
     left: 0;
     gap: 10px;
     right: 0;
-    margin-bottom: 10px;
     text-align: center;
     justify-content: center;
     align-items: center;
+    transition: bottom 0.3s ease;
+}
+
+.address-bar-con.collapsed {
+    bottom: -25px;
 }
 
 .address-bar {
 
     z-index: 10;
-    height: 40px;
+    height: 30px;
     background: rgba(248, 250, 252, 0.70);
     /* Semi-transparent */
     backdrop-filter: blur(10px);
@@ -260,7 +536,7 @@ body {
     /* Changed from border-bottom */
     display: flex;
     align-items: center;
-    padding: 0 16px;
+    padding: 0 8px;
     gap: 12px;
     border-radius: 20px;
     flex-shrink: 0;
@@ -270,21 +546,21 @@ body {
 
 .navigation-controls {
     display: flex;
-    gap: 4px;
+    gap: 0px;
 }
 
 .nav-btn {
     background: transparent;
     border: none;
-    padding: 8px;
-    border-radius: var(--border-radius);
+    padding: 4px;
+    border-radius: 40px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: var(--transition);
+    transition: all 0.2s ease-in-out;
 }
 
 .nav-btn:hover {
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary-light);
     color: var(--text-primary);
 }
 
@@ -298,9 +574,10 @@ body {
     display: flex;
     align-items: center;
     border: none;
-   
+
     border-radius: 100px;
- 
+    min-width: 400px;
+
     height: 36px;
     transition: var(--transition);
 }
@@ -313,6 +590,7 @@ body {
     font-size: 14px;
     background: transparent;
     color: var(--text-primary);
+    text-align: center;
 }
 
 .secure-indicator {
@@ -332,7 +610,7 @@ body {
     background: transparent;
     border: none;
     padding: 8px;
-    border-radius: var(--border-radius);
+    border-radius: var(--tab-border-radius);
     cursor: pointer;
     transition: var(--transition);
 }
@@ -400,7 +678,7 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: white;
     padding: 16px 24px;
-    border-radius: var(--border-radius);
+    border-radius: var(--tab-border-radius);
     cursor: pointer;
     transition: var(--transition);
     display: flex;

@@ -6,7 +6,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NetBird Browser</title>
+  <title>netbird</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -60,6 +60,13 @@
                   <path d="M6 2L12 8L6 14" stroke="currentColor" stroke-width="2" fill="none" />
                 </svg>
               </button>
+            
+            </div>
+
+          </div>
+          <div class="address-bar">
+            <div class="url-input-container">
+              <input type="text" class="url-input" id="urlInput" placeholder="Enter URL or search...">
               <button class="nav-btn" id="refreshBtn">
                 <svg width="16" height="16" viewBox="0 0 16 16">
                   <path
@@ -68,72 +75,79 @@
                 </svg>
               </button>
             </div>
-
-          </div>
-          <div class="address-bar">
-            <div class="url-input-container">
-              <input type="text" class="url-input" id="urlInput" placeholder="Enter URL or search...">
-              <button class="secure-indicator" id="secureIndicator">
-                <svg width="14" height="14" viewBox="0 0 14 14">
-                  <path d="M3.5 6V4.5C3.5 2.5 5 1 7 1C9 1 10.5 2.5 10.5 4.5V6M2 6H12V12H2V6Z" stroke="currentColor"
-                    stroke-width="1.5" fill="none" />
-                </svg>
-              </button>
-            </div>
           </div>
 
 
-       
+
         </div>
       </div>
-      <div class="resizer"></div>
-      <div class="sidebar">
+      <div class="window-controls">
+        <button id="minimizeBtn" class="window-btn minimize">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M2 6H10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+
+        <button id="maximizeBtn" class="window-btn maximize">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <rect x="2" y="2" width="8" height="8" stroke="currentColor" stroke-width="2" fill="none" rx="1.5"
+              ry="1.5" />
+          </svg>
+        </button>
+
+        <button id="closeBtn" class="window-btn close" style="z-index: 100;">
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="sidebar collapsed">
+        <div class="resizer"></div>
         <div class="sidebar-header">
-          <div class="window-controls">
-            <button id="minimizeBtn" class="window-btn minimize">-</button>
-            <button id="maximizeBtn" class="window-btn maximize">□</button>
-            <button id="closeBtn" class="window-btn close">×</button>
-          </div>
-          <button class="new-tab-btn" id="newTabBtn">
-            <svg width="16" height="16" viewBox="0 0 16 16">
-              <path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="2" />
-            </svg>
+          <button class="collapse-btn" id="collapseBtn" >
+
+            <img src="ic_collapse.svg" />
+
           </button>
-          <div class="sidebar-actions">
-            <button class="action-btn" id="historyBtn">
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <path d="M8 2C11.314 2 14 4.686 14 8C14 11.314 11.314 14 8 14C4.686 14 2 11.314 2 8C2 6.5 2.5 5.1 3.4 4"
-                  stroke="currentColor" stroke-width="2" fill="none" />
-                <path d="M8 4V8L11 11" stroke="currentColor" stroke-width="2" fill="none" />
-              </svg>
-            </button>
-            <button class="action-btn" id="bookmarksBtn">
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <path d="M3 2V14L8 10L13 14V2H3Z" stroke="currentColor" stroke-width="2" fill="none" />
-              </svg>
-            </button>
-            <button class="action-btn" id="extensionsBtn">
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <path d="M8 2L10 6L14 6L11 9L12 14L8 11L4 14L5 9L2 6L6 6L8 2Z" stroke="currentColor" stroke-width="2"
-                  fill="none" />
-              </svg>
-            </button>
-          </div>
+          <!-- <div class="sidebar-actions">
+      <button class="action-btn" id="historyBtn">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path d="M8 2C11.314 2 14 4.686 14 8C14 11.314 11.314 14 8 14C4.686 14 2 11.314 2 8C2 6.5 2.5 5.1 3.4 4"
+            stroke="currentColor" stroke-width="2" fill="none" />
+          <path d="M8 4V8L11 11" stroke="currentColor" stroke-width="2" fill="none" />
+        </svg>
+      </button>
+      <button class="action-btn" id="bookmarksBtn">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path d="M3 2V14L8 10L13 14V2H3Z" stroke="currentColor" stroke-width="2" fill="none" />
+        </svg>
+      </button>
+      <button class="action-btn" id="extensionsBtn">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path d="M8 2L10 6L14 6L11 9L12 14L8 11L4 14L5 9L2 6L6 6L8 2Z" stroke="currentColor" stroke-width="2"
+            fill="none" />
+        </svg>
+      </button>
+    </div> -->
         </div>
-   <div class="extension-actions" id="extensionActions"></div>
+        <div class="extension-actions" id="extensionActions"></div>
         <div class="tabs-container" id="tabsContainer">
           <!-- Vertical tabs will be added here -->
         </div>
-
+        <button class="new-tab-btn" id="newTabBtn">
+          <svg width="16" height="16" viewBox="0 0 16 16">
+            <path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="2" />
+          </svg>
+        </button>
         <div class="sidebar-panel" id="sidebarPanel">
           <!-- History, bookmarks, extensions panels -->
-           
         </div>
-        
-      </div>
     </div>
+  </div>
 
-    <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 
 </html>

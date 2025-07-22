@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const path = require('path');
 
 const api = {
+  // Existing API methods
   createTab: (url) => ipcRenderer.invoke('create-tab', url),
   closeTab: (tabId) => ipcRenderer.invoke('close-tab', tabId),
   navigateTab: (tabId, url) => ipcRenderer.invoke('navigate-tab', tabId, url),
@@ -22,6 +23,17 @@ const api = {
   showExtensionPopup: (extensionId, currentUrl) => ipcRenderer.invoke('show-extension-popup', extensionId, currentUrl),
   getExtensionFileContent: (extensionId, relativePath) => ipcRenderer.invoke('get-extension-file-content', extensionId, relativePath),
   getExtensionApiScript: (extensionId, currentUrl) => ipcRenderer.invoke('get-extension-api-script', extensionId, currentUrl),
+  createNewTab: (url) => ipcRenderer.invoke('createNewTab', url),
+  
+  // Window control methods
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+  
+  // New webview key event methods
+  webviewKeyEvent: (tabId, keyEventData) => ipcRenderer.invoke('webview-key-event', tabId, keyEventData),
+  registerWebviewKeyHandler: (tabId, handlerName) => ipcRenderer.invoke('register-webview-key-handler', tabId, handlerName),
+  getWebviewKeyHistory: (tabId, limit = 10) => ipcRenderer.invoke('get-webview-key-history', tabId, limit),
 };
 
 if (contextBridge) {
