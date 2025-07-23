@@ -1,5 +1,6 @@
 // modules/NavigationManager.js
 import { WebviewEvents } from './WebviewEvents.js';
+import { getErrorHtml } from './errorTemplate.js';
 
 export class NavigationManager {
     constructor(app) {
@@ -115,6 +116,17 @@ export class NavigationManager {
             }
         });
 
+        webview.addEventListener('did-navigate-in-page', (e) => {
+            const tab = this.app.tabManager.tabs.get(tabId);
+            if (tab) {
+                tab.url = e.url;
+                tab.canGoBack = webview.canGoBack();
+                tab.canGoForward = webview.canGoForward();
+                this.app.uiManager.updateUI(tab);
+                this.app.dataManager.addToHistory(e.url, tab.title);
+            }
+        });
+
         webview.addEventListener('page-title-updated', (e) => {
             const tab = this.app.tabManager.tabs.get(tabId);
             if (tab) {
@@ -148,6 +160,25 @@ export class NavigationManager {
         // Handle webview destruction
         webview.addEventListener('destroyed', () => {
             this.webviewEvents.stopEventListening(tabId);
+        });
+
+        // Handle load failures with a custom error page
+        webview.addEventListener('did-fail-load', (e) => {
+            // Ignore aborted loads (error code -3)
+            if (e.errorCode === -3 || !e.isMainFrame) return;
+
+            const errorHtml = getErrorHtml(e.errorCode, e.errorDescription, e.validatedURL);
+
+            webview.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+
+            const tab = this.app.tabManager.tabs.get(tabId);
+            if (tab) {
+                tab.isLoading = false;
+                tab.title = 'Error Loading Page';
+                tab.url = e.validatedURL; // Keep the original URL for potential retry
+                this.app.uiManager.updateUI(tab);
+                this.app.tabManager.updateTabTitle(tabId, tab.title);
+            }
         });
     }
 

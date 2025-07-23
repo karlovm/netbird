@@ -15,6 +15,9 @@
     "netbird"
   ],
   "build": {
+    "appId": "one.ety.netbird",
+    "productName": "Netbird",
+    "icon": "build/icon",
     "asarUnpack": [
       "**/preload.js"
     ]

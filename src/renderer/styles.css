@@ -19,6 +19,73 @@
     --transition: all 0.2s ease;
 }
 
+body.dark {
+    --primary-color: #60A5FA;
+    --secondary-color: #3B82F6;
+    --accent-color: #60A5FA;
+    --light-accent-color: #3b82f66c;
+    --bg-primary: #1F2937;
+    --bg-secondary: #4B5563;
+    --bg-secondary-light: #4b55632f;
+    --bg-tertiary: #374151;
+    --text-primary: #F3F4F6;
+    --text-secondary: #9CA3AF;
+    --border-color: #4B5563;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+body.dark .welcome-screen {
+    background: linear-gradient(135deg, #1F2937 0%, #111827 100%);
+    color: #F3F4F6;
+}
+
+body.dark .quick-action {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #F3F4F6;
+}
+
+body.dark .quick-action:hover {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+body.dark .address-bar {
+    background: rgba(31, 41, 55, 0.70);
+    border-top: 1px solid var(--border-color);
+}
+
+body.dark .window-controls:hover {
+    background: rgba(31, 41, 55, 0.70);
+    border-top: 1px solid var(--border-color);
+}
+
+body.dark .title-bar {
+    background: #1F2937;
+}
+
+body.dark .tab-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+}
+
+body.dark .tab-item:hover {
+    background: var(--bg-tertiary);
+}
+
+body.dark .tab-item.active {
+    background: var(--light-accent-color);
+    border-color: var(--light-accent-color);
+}
+
+body.dark .nav-btn:hover {
+    background: var(--bg-secondary-light);
+}
+
+body.dark .collapse-btn {
+    filter: invert(100%) sepia(100%) saturate(0%) hue-rotate(162deg) brightness(101%) contrast(104%);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -254,8 +321,24 @@ body {
   img {
     height: 16px;
     width: 16px;
+    color: white;
+    fill: white;
+
+     svg path {
+    height: 16px;
+    width: 16px;
+    color: white;
+    fill: white;
+  }
   }
 
+
+  svg {
+    height: 16px;
+    width: 16px;
+    color: white;
+    fill: white;
+  }
 }
 
 .sidebar.collapsed .collapse-btn {
@@ -320,7 +403,9 @@ body {
 .action-btn {
     background: transparent;
     border: none;
-    padding: 4px;
+    padding-right: 8px;
+    margin-top: 8px;
+
     border-radius: var(--tab-border-radius);
     cursor: pointer;
     color: var(--text-secondary);

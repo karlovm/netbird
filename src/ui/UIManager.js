@@ -5,13 +5,10 @@ export class UIManager {
         this.isResizing = false;
         this.addressBarTimeout = null;
         this.scrollDebounceTimeout = null;
-        
-        // Track scroll position for direction detection
-        this.lastScrollPositions = new Map(); // tabId -> scrollTop
-        
-        // Load from localStorage or use defaults
+        this.lastScrollPositions = new Map();
         this.expandedWidth = parseInt(localStorage.getItem('sidebarExpandedWidth')) || 250;
-        const isCollapsed = localStorage.getItem('sidebarCollapsed') !== 'false'; // Default to true (collapsed)
+        this.mouseOverAddressBar = false;
+        const isCollapsed = localStorage.getItem('sidebarCollapsed') !== 'false';
 
         const sidebar = document.querySelector('.sidebar');
         if (sidebar) {
@@ -24,6 +21,11 @@ export class UIManager {
             }
         }
 
+        // Load dark mode preference
+        if (localStorage.getItem('darkMode') === 'true') {
+            document.body.classList.add('dark');
+        }
+
         this.setupResizer();
         this.setupSidebarControls();
         this.setupSidebarScrollHandler();
@@ -31,6 +33,85 @@ export class UIManager {
         this.setupWindowControls();
         this.setupAddressBarAutoHide();
         this.setupWebviewEventListeners();
+        this.setupUrlInputHandlers(); // New method to handle URL input interactions
+        this.setupThemeToggle();
+    }
+
+    // New method to set up theme toggle
+    setupThemeToggle() {
+        const themeBtn = document.getElementById('themeBtn');
+        if (!themeBtn) return;
+
+        themeBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark');
+            const isDark = document.body.classList.contains('dark');
+            localStorage.setItem('darkMode', isDark.toString());
+            console.log(`UIManager: Dark mode ${isDark ? 'enabled' : 'disabled'}`);
+        });
+
+        console.log('UIManager: Theme toggle setup complete');
+    }
+
+    // New method to set up URL input event listeners
+    setupUrlInputHandlers() {
+        const urlInput = document.getElementById('urlInput');
+        if (!urlInput) return;
+
+        // On focus, show the URL and select all text, and show bar
+        urlInput.addEventListener('focus', () => {
+            const tab = this.app.tabManager.tabs.get(this.app.activeTabId);
+            if (tab && tab.url !== 'netbird://welcome') {
+                urlInput.value = tab.url;
+                urlInput.select(); // Auto-select all text
+            }
+            this.showBar(false);
+        });
+
+        // On blur (when user clicks away), revert to showing the tab title and handle hide
+        urlInput.addEventListener('blur', () => {
+            const tab = this.app.tabManager.tabs.get(this.app.activeTabId);
+            if (tab) {
+                urlInput.value = tab.url === 'netbird://welcome' ? '' : (tab.title || 'Untitled');
+            }
+            if (!this.mouseOverAddressBar) {
+                this.startHideTimer();
+            }
+        });
+
+        // On Enter key, navigate to the entered URL and revert to title
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const url = urlInput.value.trim();
+                if (url) {
+                    this.app.navigationManager.navigate(url);
+                    urlInput.blur();
+                    // After navigation, updateUI will handle setting the title
+                }
+            }
+        });
+
+        console.log('UIManager: URL input handlers setup complete');
+    }
+
+    updateUI(tab) {
+        const urlInput = document.getElementById('urlInput');
+        if (urlInput && document.activeElement !== urlInput) {
+            // Display tab title instead of URL, unless it's the welcome screen
+            urlInput.value = tab.url === 'netbird://welcome' ? '' : (tab.title || 'Untitled');
+        }
+
+        this.updateNavigationButtons(tab.canGoBack, tab.canGoForward);
+
+        const container = document.getElementById('webviewContainer');
+        const existingIndicator = container.querySelector('.loading-indicator');
+
+        if (tab.isLoading && !existingIndicator) {
+            const indicator = document.createElement('div');
+            indicator.className = 'loading-indicator';
+            container.appendChild(indicator);
+        } else if (!tab.isLoading && existingIndicator) {
+            existingIndicator.remove();
+        }
     }
 
     setupWebviewEventListeners() {
@@ -165,7 +246,7 @@ export class UIManager {
         const addressBarCon = document.querySelector('.address-bar-con');
         if (!addressBarCon) return;
 
-        const startHideTimer = () => {
+        this.startHideTimer = () => {
             if (this.addressBarTimeout) {
                 clearTimeout(this.addressBarTimeout);
             }
@@ -176,8 +257,17 @@ export class UIManager {
         };
 
         // Mouse interactions with address bar
-        addressBarCon.addEventListener('mouseenter', () => this.showBar(false));
-        addressBarCon.addEventListener('mouseleave', startHideTimer);
+        addressBarCon.addEventListener('mouseenter', () => {
+            this.mouseOverAddressBar = true;
+            this.showBar(false);
+        });
+        addressBarCon.addEventListener('mouseleave', () => {
+            this.mouseOverAddressBar = false;
+            const urlInput = document.getElementById('urlInput');
+            if (document.activeElement !== urlInput) {
+                this.startHideTimer();
+            }
+        });
 
         console.log('UIManager: Address bar auto-hide setup complete');
     }
@@ -459,22 +549,7 @@ export class UIManager {
         }
     }
 
-    updateUI(tab) {
-        // No need for setupWebviewScrollHandler since WebviewEvents handles this now
-        document.getElementById('urlInput').value = tab.url === 'netbird://welcome' ? '' : tab.url;
-        this.updateNavigationButtons(tab.canGoBack, tab.canGoForward);
 
-        const container = document.getElementById('webviewContainer');
-        const existingIndicator = container.querySelector('.loading-indicator');
-
-        if (tab.isLoading && !existingIndicator) {
-            const indicator = document.createElement('div');
-            indicator.className = 'loading-indicator';
-            container.appendChild(indicator);
-        } else if (!tab.isLoading && existingIndicator) {
-            existingIndicator.remove();
-        }
-    }
 
     updateNavigationButtons(canGoBack, canGoForward) {
         const backBtn = document.getElementById('backBtn');

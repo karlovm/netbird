@@ -42,6 +42,7 @@ class NetBirdBrowser {
       height: 800,
       minWidth: 800,
       minHeight: 600,
+      icon: path.join(__dirname, '../../build/icon.png'),
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -98,7 +99,7 @@ class NetBirdBrowser {
     // Webview key event handler
     ipcMain.handle('webview-key-event', async (event, tabId, keyEventData) => {
       try {
-        alert(123)
+
         console.log(`Webview key event from tab ${tabId}:`, keyEventData);
 
         // Get the window that sent this event

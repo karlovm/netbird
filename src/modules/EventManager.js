@@ -29,11 +29,7 @@ export class EventManager {
 
         // URL input - navigate on Enter
         const urlInput = document.getElementById('urlInput');
-        urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.app.navigate(urlInput.value);
-            }
-        });
+     
     }
 
     bindTabEvents() {
