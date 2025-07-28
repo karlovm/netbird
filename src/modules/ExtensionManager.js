@@ -4,74 +4,219 @@ export class ExtensionManager {
     constructor(app) {
         this.app = app;
         this.extensions = [];
+        this.isLoading = false;
     }
 
     async loadExtensions() {
+        if (this.isLoading) {
+            console.log('Extensions already loading, skipping...');
+            return;
+        }
+
+        this.isLoading = true;
+        
         try {
-            if (window.electronAPI) {
-                this.extensions = await window.electronAPI.getExtensions();
+            if (window.electronAPI && window.electronAPI.getExtensions) {
+                console.log('Loading extensions from Electron API...');
+                const extensionsData = await window.electronAPI.getExtensions();
+                
+                if (Array.isArray(extensionsData)) {
+                    this.extensions = extensionsData;
+                    console.log('Loaded extensions:', this.extensions.length);
+                    
+                    // Render buttons after loading
+                    this.renderExtensionButtons();
+                } else {
+                    console.warn('Invalid extensions data received:', extensionsData);
+                    this.extensions = [];
+                }
             } else {
-                this.extensions = [];
                 console.warn('Electron API not available for extensions');
+                this.extensions = [];
             }
         } catch (error) {
             console.error('Failed to load extensions:', error);
             this.extensions = [];
+        } finally {
+            this.isLoading = false;
         }
     }
 
     renderExtensionButtons() {
         const container = document.getElementById('extensionActions');
-        if (!container) return;
+        if (!container) {
+            console.warn('Extension actions container not found');
+            return;
+        }
         
+        console.log('Rendering extension buttons for', this.extensions.length, 'extensions');
+        
+        // Clear existing buttons
         container.innerHTML = '';
+        
+        if (this.extensions.length === 0) {
+            console.log('No extensions to render');
+            return;
+        }
+        
         this.extensions.forEach(extension => {
-            if (extension.icon || extension.manifest.browser_action?.default_icon) {
-                const button = document.createElement('button');
-                button.className = 'extension-btn';
-                button.title = extension.name;
+            try {
+                console.log('Rendering button for extension:', extension.name);
                 
-                let iconPath = extension.icon || extension.manifest.browser_action?.default_icon;
-                if (typeof iconPath === 'object') {
-                    const sizes = Object.keys(iconPath).map(Number).sort((a, b) => b - a);
-                    iconPath = iconPath[sizes[0]];
+                // Check if extension has popup (required for button)
+                const hasPopup = extension.popup || 
+                                (extension.manifest && extension.manifest.browser_action && extension.manifest.browser_action.default_popup) ||
+                                (extension.manifest && extension.manifest.action && extension.manifest.action.default_popup);
+                
+                if (!hasPopup) {
+                    console.log('Extension', extension.name, 'has no popup, skipping button');
+                    return;
                 }
                 
-                const iconUrl = extension.icon ? extension.icon : `file://${extension.path}/${iconPath}`;
-                button.innerHTML = `
-                    <img src="${iconUrl}" 
-                        width="16" height="16" alt="${extension.name}"
-                        onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cmVjdCB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIGZpbGw9IiM2NjYiLz48L3N2Zz4='">
-                `;
+                const button = document.createElement('button');
+                button.className = 'extension-btn';
+                button.title = extension.name + (extension.version ? ` v${extension.version}` : '');
+                button.setAttribute('data-extension-id', extension.id);
                 
-                button.addEventListener('click', () => {
+                // Get icon path
+                let iconPath = this.getExtensionIconPath(extension);
+                
+                if (iconPath) {
+                    const img = document.createElement('img');
+                    img.src = iconPath;
+                    img.width = 16;
+                    img.height = 16;
+                    img.alt = extension.name;
+                    img.style.display = 'block';
+                    
+                    // Fallback for broken images
+                    img.onerror = function() {
+                        this.onerror = null;
+                        this.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDE2IDE2Ij48cmVjdCB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIGZpbGw9IiM2NjYiLz48dGV4dCB4PSI4IiB5PSIxMiIgZm9udC1zaXplPSIxMiIgZmlsbD0iI2ZmZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+RTwvdGV4dD48L3N2Zz4=';
+                    };
+                    
+                    button.appendChild(img);
+                } else {
+                    // Text fallback if no icon
+                    button.textContent = extension.name.charAt(0).toUpperCase();
+                    button.style.fontSize = '12px';
+                    button.style.fontWeight = 'bold';
+                }
+                
+                // Add click handler
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Extension button clicked:', extension.id);
                     this.showExtensionPopup(extension.id);
                 });
                 
                 container.appendChild(button);
+                console.log('Successfully added button for extension:', extension.name);
+                
+            } catch (error) {
+                console.error('Error rendering button for extension:', extension.name, error);
             }
         });
+        
+        console.log('Extension buttons rendering complete. Total buttons:', container.children.length);
+    }
+
+    getExtensionIconPath(extension) {
+        // First check if extension has a pre-processed icon (base64 data URL)
+        if (extension.icon && extension.icon.startsWith('data:')) {
+            return extension.icon;
+        }
+        
+        // Check manifest for icon definitions
+        let iconRelativePath = null;
+        
+        if (extension.manifest) {
+            // Check standard icons
+            if (extension.manifest.icons) {
+                const sizes = Object.keys(extension.manifest.icons).map(Number).sort((a, b) => b - a);
+                const largestSize = sizes[0];
+                if (largestSize) {
+                    iconRelativePath = extension.manifest.icons[largestSize];
+                }
+            }
+            // Check browser_action icon
+            else if (extension.manifest.browser_action && extension.manifest.browser_action.default_icon) {
+                const iconInfo = extension.manifest.browser_action.default_icon;
+                if (typeof iconInfo === 'string') {
+                    iconRelativePath = iconInfo;
+                } else if (typeof iconInfo === 'object') {
+                    const sizes = Object.keys(iconInfo).map(Number).sort((a, b) => b - a);
+                    const largestSize = sizes[0];
+                    if (largestSize) {
+                        iconRelativePath = iconInfo[largestSize];
+                    }
+                }
+            }
+            // Check action icon (Manifest V3)
+            else if (extension.manifest.action && extension.manifest.action.default_icon) {
+                const iconInfo = extension.manifest.action.default_icon;
+                if (typeof iconInfo === 'string') {
+                    iconRelativePath = iconInfo;
+                } else if (typeof iconInfo === 'object') {
+                    const sizes = Object.keys(iconInfo).map(Number).sort((a, b) => b - a);
+                    const largestSize = sizes[0];
+                    if (largestSize) {
+                        iconRelativePath = iconInfo[largestSize];
+                    }
+                }
+            }
+        }
+        
+        // If we found a relative path, construct the full URL
+        if (iconRelativePath && extension.path) {
+            // Use file:// protocol for local files
+            return `file://${extension.path}/${iconRelativePath}`;
+        }
+        
+        // If extension has an electronId, use chrome-extension protocol
+        if (iconRelativePath && extension.electronId) {
+            return `chrome-extension://${extension.electronId}/${iconRelativePath}`;
+        }
+        
+        return null;
     }
 
     async showExtensionPopup(extensionId) {
         console.log('Calling showExtensionPopup for extension:', extensionId);
+        
+        if (!extensionId) {
+            console.error('No extension ID provided');
+            return;
+        }
+        
         try {
-            if (window.electronAPI) {
-                const tab = this.app.getTabs().get(this.app.activeTabId);
-                const currentUrl = tab ? tab.url : '';
-                const result = await window.electronAPI.showExtensionPopup(extensionId, currentUrl);
-                
-                console.log('Received IPC response:', result);
-                if (!result.success) {
-                    console.error('Failed to show extension popup:', result.error);
-                    alert(`Failed to show extension popup: ${result.error}`);
-                } else {
-                    console.log('Extension popup shown successfully for:', extensionId);
-                }
-            } else {
-                console.warn('Electron API not available for showing extension popup');
+            if (!window.electronAPI || !window.electronAPI.showExtensionPopup) {
+                console.error('Electron API not available for showing extension popup');
                 alert('Extension popup requires Electron environment');
+                return;
             }
+
+            // Get current tab URL
+            let currentUrl = '';
+            if (this.app && this.app.activeTabId) {
+                const tab = this.app.getTabs().get(this.app.activeTabId);
+                currentUrl = tab ? tab.url : '';
+            }
+            
+            console.log('Showing popup for extension:', extensionId, 'with URL:', currentUrl);
+            
+            const result = await window.electronAPI.showExtensionPopup(extensionId, currentUrl);
+            
+            console.log('Received IPC response:', result);
+            
+            if (!result || !result.success) {
+                const errorMsg = result ? result.error : 'Unknown error';
+                console.error('Failed to show extension popup:', errorMsg);
+                alert(`Failed to show extension popup: ${errorMsg}`);
+            } else {
+                console.log('Extension popup shown successfully for:', extensionId);
+            }
+            
         } catch (error) {
             console.error('Error showing extension popup:', error);
             alert(`Error showing extension popup: ${error.message}`);
@@ -80,18 +225,29 @@ export class ExtensionManager {
 
     async loadExtension() {
         try {
-            if (window.electronAPI) {
-                const result = await window.electronAPI.loadExtension();
-                if (result) {
-                    this.extensions.push(result);
-                    this.renderExtensionButtons();
-                    // Trigger UI update for extensions panel if it's currently open
-                    if (this.app.currentPanel === 'extensions') {
-                        this.app.uiManager.renderExtensionsPanel();
-                    }
+            if (!window.electronAPI || !window.electronAPI.loadExtension) {
+                alert('Extension loading requires Electron environment');
+                return;
+            }
+            
+            console.log('Loading new extension...');
+            const result = await window.electronAPI.loadExtension();
+            
+            if (result) {
+                console.log('Extension loaded successfully:', result);
+                
+                // Add to local extensions array
+                this.extensions.push(result);
+                
+                // Re-render buttons
+                this.renderExtensionButtons();
+                
+                // Trigger UI update for extensions panel if it's currently open
+                if (this.app && this.app.currentPanel === 'extensions') {
+                    this.app.uiManager.renderExtensionsPanel();
                 }
             } else {
-                alert('Extension loading requires Electron environment');
+                console.log('Extension loading cancelled or failed');
             }
         } catch (error) {
             console.error('Failed to load extension:', error);
@@ -99,7 +255,17 @@ export class ExtensionManager {
         }
     }
 
-    // Content Script Management
+    // Get extension by ID
+    getExtension(extensionId) {
+        return this.extensions.find(ext => ext.id === extensionId);
+    }
+
+    // Get all extensions
+    getExtensions() {
+        return this.extensions;
+    }
+
+    // Content Script Management (unchanged from original)
     matchesUrl(url, patterns) {
         for (const pattern of patterns) {
             if (this.testPattern(url, pattern)) {
@@ -127,6 +293,11 @@ export class ExtensionManager {
 
     async injectExtensionAPIs(webview, extension, currentUrl) {
         try {
+            if (!window.electronAPI || !window.electronAPI.getExtensionApiScript) {
+                console.warn('Extension API script injection not available');
+                return;
+            }
+            
             const apiScript = await window.electronAPI.getExtensionApiScript(extension.id, currentUrl);
             await webview.executeJavaScript(apiScript);
         } catch (error) {
@@ -162,21 +333,18 @@ export class ExtensionManager {
                                 try {
                                     const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
 
-                                    // Validate content before injection
                                     if (!jsContent || jsContent.trim() === '') {
                                         console.warn('Empty or invalid script content for:', jsFile);
                                         continue;
                                     }
 
-                                    console.log(`Attempting to inject ${jsFile} for extension ${extension.id}`);
+                                    console.log(`Injecting ${jsFile} for extension ${extension.id}`);
 
-                                    // Create robust injection method
                                     const injectionCode = `
                                         (function() {
                                             try {
                                                 console.log('Injecting content script: ${jsFile}');
                                                 
-                                                // Check if DOM is ready
                                                 if (document.readyState === 'loading') {
                                                     document.addEventListener('DOMContentLoaded', function() {
                                                         executeContentScript();
@@ -191,33 +359,19 @@ export class ExtensionManager {
                                                         console.log('Successfully executed content script: ${jsFile}');
                                                     } catch (scriptError) {
                                                         console.error('Content script execution error in ${jsFile}:', scriptError);
-                                                        console.error('Error stack:', scriptError.stack);
                                                     }
                                                 }
                                                 
                                             } catch (wrapperError) {
                                                 console.error('Content script wrapper error for ${jsFile}:', wrapperError);
-                                                console.error('Wrapper error stack:', wrapperError.stack);
                                             }
                                         })();
                                     `;
 
                                     await webview.executeJavaScript(injectionCode);
-                                    console.log('Successfully injected wrapper for:', jsFile);
 
                                 } catch (error) {
                                     console.error('Failed to inject JS:', jsFile, error);
-                                    console.error('Extension:', extension.id);
-                                    console.error('URL:', url);
-
-                                    // Enhanced error reporting
-                                    if (error.message.includes('Script failed to execute')) {
-                                        console.error('Script execution failed. Check for:');
-                                        console.error('- Syntax errors');
-                                        console.error('- Missing dependencies');
-                                        console.error('- DOM elements that don\'t exist yet');
-                                        console.error('- Async operations without proper handling');
-                                    }
                                 }
                             }
                         }
@@ -229,164 +383,20 @@ export class ExtensionManager {
         }
     }
 
-    // Alternative safe injection method
-    async injectContentScriptsSafe(webview, url) {
-        try {
-            for (const extension of this.extensions) {
-                if (!extension.enabled) continue;
-
-                const contentScripts = extension.manifest.content_scripts || [];
-
-                for (const script of contentScripts) {
-                    if (this.matchesUrl(url, script.matches)) {
-                        if (script.js) {
-                            await this.injectExtensionAPIs(webview, extension, url);
-                            for (const jsFile of script.js) {
-                                try {
-                                    const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
-
-                                    // Validate content
-                                    if (!jsContent || jsContent.trim() === '') {
-                                        console.warn('Empty script content for:', jsFile);
-                                        continue;
-                                    }
-
-                                    // Test script syntax before injection
-                                    try {
-                                        new Function(jsContent);
-                                        console.log('Script syntax validation passed for:', jsFile);
-                                    } catch (syntaxError) {
-                                        console.error('Script syntax error in', jsFile, ':', syntaxError);
-                                        continue;
-                                    }
-
-                                    // Safe injection with isolated scope
-                                    const safeInjectionCode = `
-                                        (function() {
-                                            'use strict';
-                                            
-                                            // Create isolated scope for content script
-                                            const contentScriptScope = {
-                                                window: window,
-                                                document: document,
-                                                console: console,
-                                                setTimeout: setTimeout,
-                                                setInterval: setInterval,
-                                                clearTimeout: clearTimeout,
-                                                clearInterval: clearInterval
-                                            };
-                                            
-                                            // Execute in try-catch with detailed error reporting
-                                            try {
-                                                const executeScript = function() {
-                                                    ${jsContent}
-                                                };
-                                                
-                                                // Wait for DOM if needed
-                                                if (document.readyState === 'loading') {
-                                                    document.addEventListener('DOMContentLoaded', executeScript);
-                                                } else {
-                                                    executeScript();
-                                                }
-                                                
-                                            } catch (error) {
-                                                console.error('Content script error in ${jsFile}:', {
-                                                    message: error.message,
-                                                    stack: error.stack,
-                                                    name: error.name,
-                                                    line: error.lineNumber,
-                                                    column: error.columnNumber
-                                                });
-                                            }
-                                        })();
-                                    `;
-
-                                    await webview.executeJavaScript(safeInjectionCode);
-                                    console.log('Successfully injected:', jsFile);
-
-                                } catch (error) {
-                                    console.error('Injection failed for:', jsFile, error);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Content script injection failed:', error);
+    // Debug methods
+    debugExtensions() {
+        console.log('=== EXTENSION MANAGER DEBUG ===');
+        console.log('Extensions loaded:', this.extensions.length);
+        console.log('Extensions data:', this.extensions);
+        
+        const container = document.getElementById('extensionActions');
+        console.log('Extension container found:', !!container);
+        if (container) {
+            console.log('Container children:', container.children.length);
         }
-    }
-
-    // Debug and utility methods
-    async debugContentScript(extensionId, jsFile) {
-        try {
-            const jsContent = await window.electronAPI.getExtensionFileContent(extensionId, jsFile);
-            console.log('=== DEBUG CONTENT SCRIPT ===');
-            console.log('Extension:', extensionId);
-            console.log('File:', jsFile);
-            console.log('Content length:', jsContent.length);
-            console.log('Content preview:', jsContent.substring(0, 500));
-            console.log('Contains import:', /\bimport\b/.test(jsContent));
-            console.log('Contains export:', /\bexport\b/.test(jsContent));
-            console.log('Contains require:', /\brequire\b/.test(jsContent));
-            console.log('Contains chrome.*:', /chrome\.\w+/.test(jsContent));
-            console.log('Contains browser.*:', /browser\.\w+/.test(jsContent));
-            console.log('==============================');
-
-            // Try to parse as JavaScript to check for syntax errors
-            try {
-                new Function(jsContent);
-                console.log('✓ Script syntax is valid');
-            } catch (syntaxError) {
-                console.error('✗ Script syntax error:', syntaxError);
-            }
-
-            return jsContent;
-        } catch (error) {
-            console.error('Failed to debug content script:', error);
-            return null;
-        }
-    }
-
-    enableConsoleDebugging(webview) {
-        webview.addEventListener('console-message', (e) => {
-            console.log(`[WebView Console] [${e.level}] ${e.message}`);
-            if (e.sourceId) {
-                console.log(`[WebView Console] Source: ${e.sourceId}:${e.line}`);
-            }
-        });
-
-        webview.addEventListener('dom-ready', () => {
-            console.log('WebView DOM ready');
-        });
-    }
-
-    async checkContentScriptDependencies(webview, extensionId) {
-        try {
-            const checkCode = `
-                (function() {
-                    const report = {
-                        chrome: typeof chrome !== 'undefined',
-                        browser: typeof browser !== 'undefined',
-                        document: typeof document !== 'undefined',
-                        window: typeof window !== 'undefined',
-                        jQuery: typeof $ !== 'undefined' || typeof jQuery !== 'undefined',
-                        readyState: document.readyState,
-                        url: window.location.href,
-                        timestamp: Date.now()
-                    };
-                    
-                    console.log('Content script environment check for ${extensionId}:', report);
-                    return report;
-                })();
-            `;
-
-            const result = await webview.executeJavaScript(checkCode);
-            console.log('Environment check result:', result);
-            return result;
-        } catch (error) {
-            console.error('Failed to check content script dependencies:', error);
-            return null;
-        }
+        
+        console.log('Electron API available:', !!window.electronAPI);
+        console.log('getExtensions method available:', !!(window.electronAPI && window.electronAPI.getExtensions));
+        console.log('===============================');
     }
 }

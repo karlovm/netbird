@@ -8,7 +8,6 @@ export class EventManager {
     bindEvents() {
         this.bindNavigationEvents();
         this.bindTabEvents();
-        this.bindElectronEvents();
     }
 
     bindNavigationEvents() {

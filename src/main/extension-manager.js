@@ -1,6 +1,8 @@
+// main/extension-manager.js - Fixed popup window cleanup
+
 const fs = require('fs');
 const path = require('path');
-const { session, BrowserWindow, protocol, app } = require('electron');
+const { session, BrowserWindow, protocol, app, ipcMain } = require('electron');
 
 class ExtensionManager {
     constructor(userDataPath = null) {
@@ -10,32 +12,362 @@ class ExtensionManager {
         this.extensionStores = new Map();
         this.registeredProtocols = new Set();
         
+        // Store popup initialization data for preload script
+        this.popupInitData = new Map();
+
         // Set up persistence
         this.userDataPath = userDataPath || app.getPath('userData');
         this.extensionsConfigPath = path.join(this.userDataPath, 'extensions.json');
         this.extensionsDataPath = path.join(this.userDataPath, 'extensions');
-        
+
         // Ensure extensions directory exists
         if (!fs.existsSync(this.extensionsDataPath)) {
             fs.mkdirSync(this.extensionsDataPath, { recursive: true });
         }
-        
+
         this.setupExtensionAPIs();
-       
+        this.setupPopupIPC();
     }
 
-    // Load extensions from saved configuration
+    // Setup synchronous IPC handler for popup initialization data
+    setupPopupIPC() {
+        // Remove existing listener if it exists
+        try {
+            ipcMain.removeAllListeners('get-popup-init-data');
+        } catch (error) {
+            // Ignore if no listeners exist
+        }
+
+        // Synchronous IPC handler for popup initialization data
+        ipcMain.on('get-popup-init-data', (event) => {
+            try {
+                const webContentsId = event.sender.id;
+                const popupData = this.popupInitData.get(webContentsId);
+                
+                if (popupData) {
+                    console.log('Returning popup init data for webContents:', webContentsId);
+                    event.returnValue = popupData;
+                } else {
+                    console.warn('No popup init data found for webContents:', webContentsId);
+                    event.returnValue = null;
+                }
+            } catch (error) {
+                console.error('Error in get-popup-init-data handler:', error);
+                event.returnValue = null;
+            }
+        });
+    }
+
+    // FIXED: Safe popup window cleanup
+    safeClosePopup(extensionId) {
+        const popupWindow = this.popupWindows.get(extensionId);
+        if (popupWindow) {
+            try {
+                // Check if window is destroyed before accessing it
+                if (!popupWindow.isDestroyed()) {
+                    // Clean up popup data first
+                    const webContentsId = popupWindow.webContents?.id;
+                    if (webContentsId) {
+                        this.popupInitData.delete(webContentsId);
+                    }
+                    
+                    // Remove all listeners to prevent memory leaks
+                    popupWindow.removeAllListeners();
+                    
+                    // Close the window
+                    popupWindow.close();
+                } else {
+                    // Window already destroyed, just clean up data
+                    console.log('Popup window already destroyed for extension:', extensionId);
+                }
+            } catch (error) {
+                console.warn('Error during popup cleanup for extension', extensionId, ':', error.message);
+            } finally {
+                // Always remove from tracking maps
+                this.popupWindows.delete(extensionId);
+            }
+        }
+    }
+
+    // FIXED: Enhanced showExtensionPopup with better cleanup handling
+    async showExtensionPopup(extensionId, parentWindow, currentUrl = '') {
+        console.log('showExtensionPopup called with extensionId:', extensionId);
+
+        const extension = this.extensions.get(extensionId);
+        if (!extension || !extension.popup) {
+            console.log('No popup defined for extension:', extensionId);
+            return { success: false, error: 'No popup defined for extension' };
+        }
+
+        // Derive currentUrl from parentWindow if not provided
+        if (!currentUrl && parentWindow && parentWindow.webContents) {
+            try {
+                currentUrl = parentWindow.webContents.getURL();
+                console.log('Derived currentUrl from parentWindow:', currentUrl);
+            } catch (error) {
+                console.warn('Failed to derive currentUrl from parentWindow:', error.message);
+                currentUrl = 'about:blank';
+            }
+        }
+
+        // Ensure we have a valid URL
+        if (!currentUrl || currentUrl === '') {
+            currentUrl = 'about:blank';
+            console.warn(`No currentUrl provided for extension popup (${extensionId}). Using about:blank.`);
+        }
+
+        // Validate URL format
+        try {
+            new URL(currentUrl);
+        } catch (error) {
+            console.warn('Invalid URL format, using about:blank:', currentUrl);
+            currentUrl = 'about:blank';
+        }
+
+        // Close existing popup safely
+        if (this.popupWindows.has(extensionId)) {
+            console.log('Closing existing popup for extension:', extensionId);
+            this.safeClosePopup(extensionId);
+        }
+
+        const popupPath = path.join(extension.path, extension.popup);
+        if (!fs.existsSync(popupPath)) {
+            console.error('Popup file not found:', popupPath);
+            return { success: false, error: 'Popup file not found' };
+        }
+
+        try {
+            const popupWindow = new BrowserWindow({
+                width: 400,
+                height: 600,
+                parent: parentWindow,
+                modal: false,
+                resizable: true,
+                
+                show: false,
+                webPreferences: {
+                    nodeIntegration: false,
+                    contextIsolation: true,
+                    enableRemoteModule: false,
+                    webSecurity: false,
+                    allowRunningInsecureContent: true,
+                    preload: path.join(__dirname, 'extension-preload.js')
+                }
+            });
+
+            // Store popup initialization data BEFORE loading the page
+            this.popupInitData.set(popupWindow.webContents.id, {
+                extension: {
+                    id: extension.id,
+                    name: extension.name,
+                    version: extension.version,
+                    manifest: extension.manifest,
+                    path: extension.path
+                },
+                currentUrl: currentUrl
+            });
+
+            console.log('Stored popup init data for webContents:', popupWindow.webContents.id);
+
+            // FIXED: Enhanced event handlers with proper cleanup
+            let isClosing = false;
+
+            const handleClosed = () => {
+                if (isClosing) return; // Prevent multiple cleanup calls
+                isClosing = true;
+                
+                console.log('Popup window closed for extension:', extensionId);
+                
+                try {
+                    // Clean up stored data
+                    const webContentsId = popupWindow.webContents?.id;
+                    if (webContentsId) {
+                        this.popupInitData.delete(webContentsId);
+                    }
+                } catch (error) {
+                    console.warn('Error cleaning up popup data:', error.message);
+                }
+                
+                // Remove from tracking
+                this.popupWindows.delete(extensionId);
+            };
+
+            const handleBeforeUnload = (event) => {
+                console.log('Popup window before-unload for extension:', extensionId);
+                // Allow the window to close normally
+                // Cleanup will happen in 'closed' event
+            };
+
+            // Add event listeners
+            popupWindow.once('closed', handleClosed);
+            popupWindow.once('before-unload', handleBeforeUnload);
+
+            // Handle webContents destruction separately
+            popupWindow.webContents.once('destroyed', () => {
+                console.log('Popup webContents destroyed for extension:', extensionId);
+                // Additional cleanup if needed
+            });
+
+            let loadUrl;
+            if (extension.electronId) {
+                loadUrl = `chrome-extension://${extension.electronId}/${extension.popup}`;
+            } else {
+                loadUrl = `chrome-extension-${extension.id}://${extension.popup}`;
+            }
+
+            // Load the popup URL
+            await popupWindow.loadURL(loadUrl);
+
+            // Store reference before showing
+            this.popupWindows.set(extensionId, popupWindow);
+
+            // Resize and show window after content loads
+            setTimeout(async () => {
+                try {
+                    // Check if window is still valid before resizing
+                    if (!popupWindow.isDestroyed()) {
+                        const sizeCode = `
+                            JSON.stringify({
+                                width: Math.max(400, Math.min(800, Math.ceil(document.documentElement.scrollWidth))),
+                                height: Math.max(300, Math.min(600, Math.ceil(document.documentElement.scrollHeight)))
+                            })
+                        `;
+                        
+                        try {
+                            const sizeJson = await popupWindow.webContents.executeJavaScript(sizeCode);
+                            const parsedSize = JSON.parse(sizeJson);
+                            
+                            const finalWidth = Math.max(400, parsedSize.width);
+                            const finalHeight = Math.max(300, parsedSize.height);
+                            
+                            if (!popupWindow.isDestroyed()) {
+                                popupWindow.setSize(finalWidth, finalHeight);
+                                popupWindow.center();
+                                popupWindow.show();
+                            }
+                        } catch (jsError) {
+                            console.warn('Failed to execute resize script, showing with default size:', jsError.message);
+                            if (!popupWindow.isDestroyed()) {
+                                popupWindow.show();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error resizing popup:', error);
+                    try {
+                        if (!popupWindow.isDestroyed()) {
+                            popupWindow.show();
+                        }
+                    } catch (showError) {
+                        console.error('Error showing popup after resize failure:', showError);
+                    }
+                }
+            }, 200);
+
+            return { success: true };
+        } catch (error) {
+            console.error('Error in showExtensionPopup:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // FIXED: Safe extension unloading
+    async unloadExtension(extensionId) {
+        const extension = this.extensions.get(extensionId);
+        if (extension) {
+            // Close popup safely
+            if (this.popupWindows.has(extensionId)) {
+                this.safeClosePopup(extensionId);
+            }
+
+            // Remove from Electron session
+            if (extension.electronId) {
+                try {
+                    await session.defaultSession.removeExtension(extension.electronId);
+                } catch (error) {
+                    console.warn('Failed to remove extension from session:', error.message);
+                }
+            }
+
+            // Unregister protocol
+            const extensionScheme = `chrome-extension-${extension.id}`;
+            if (this.registeredProtocols.has(extensionScheme)) {
+                try {
+                    protocol.unregisterProtocol(extensionScheme);
+                    this.registeredProtocols.delete(extensionScheme);
+                } catch (error) {
+                    console.warn('Failed to unregister protocol:', error.message);
+                }
+            }
+
+            // Clean up storage
+            if (this.extensionStores.has(extensionId)) {
+                this.extensionStores.delete(extensionId);
+            }
+
+            // Remove from tracking
+            this.extensions.delete(extensionId);
+            this.loadedExtensions.delete(extensionId);
+
+            // Update saved configuration
+            this.saveConfiguration();
+
+            console.log('Extension unloaded:', extension.name);
+        }
+    }
+
+    // FIXED: Enhanced cleanup with better error handling
+    async cleanup() {
+        console.log('Cleaning up ExtensionManager...');
+
+        // Clean up popup windows safely
+        const popupPromises = [];
+        for (const extensionId of this.popupWindows.keys()) {
+            try {
+                this.safeClosePopup(extensionId);
+            } catch (error) {
+                console.warn('Error during popup cleanup for extension', extensionId, ':', error.message);
+            }
+        }
+
+        // Clear all popup tracking
+        this.popupWindows.clear();
+        this.popupInitData.clear();
+
+        // Unload all extensions
+        const unloadPromises = [];
+        for (const extensionId of this.extensions.keys()) {
+            unloadPromises.push(
+                this.unloadExtension(extensionId).catch(error => {
+                    console.warn('Error unloading extension', extensionId, ':', error.message);
+                })
+            );
+        }
+
+        // Wait for all unload operations to complete
+        await Promise.allSettled(unloadPromises);
+
+        // Remove IPC listeners
+        try {
+            ipcMain.removeAllListeners('get-popup-init-data');
+        } catch (error) {
+            console.warn('Error removing IPC listeners:', error.message);
+        }
+
+        console.log('ExtensionManager cleanup complete');
+    }
+
+    // ... (rest of the methods remain the same)
     async initializeFromConfig() {
         try {
             if (fs.existsSync(this.extensionsConfigPath)) {
                 const configData = fs.readFileSync(this.extensionsConfigPath, 'utf8');
                 const config = JSON.parse(configData);
-                
+
                 console.log('Loading saved extensions configuration...');
-                
+
                 for (const extensionConfig of config.extensions || []) {
                     try {
-                        // Check if extension path still exists
                         if (fs.existsSync(extensionConfig.path)) {
                             console.log(`Restoring extension: ${extensionConfig.name}`);
                             await this.loadExtension(extensionConfig.path);
@@ -46,7 +378,7 @@ class ExtensionManager {
                         console.error(`Failed to restore extension ${extensionConfig.name}:`, error);
                     }
                 }
-                
+
                 console.log('Extension restoration complete');
             } else {
                 console.log('No saved extensions configuration found');
@@ -56,7 +388,6 @@ class ExtensionManager {
         }
     }
 
-    // Save current extensions configuration
     saveConfiguration() {
         try {
             const config = {
@@ -69,7 +400,7 @@ class ExtensionManager {
                 })),
                 lastUpdated: new Date().toISOString()
             };
-            
+
             fs.writeFileSync(this.extensionsConfigPath, JSON.stringify(config, null, 2));
             console.log('Extensions configuration saved');
         } catch (error) {
@@ -134,229 +465,44 @@ class ExtensionManager {
         }
     }
 
-    async injectExtensionAPIs(webContents, extension, currentUrl = '', isPopup = false) {
+    // Helper methods for URL parsing
+    getHostnameFromUrl(url) {
         try {
-            if (!webContents || webContents.isDestroyed()) {
-                console.warn('WebContents is destroyed, skipping API injection');
-                return;
-            }
-
-            const safeExtension = JSON.parse(JSON.stringify(extension));
-            console.log('Injecting APIs for extension:', safeExtension.id);
-
-            if (!safeExtension.manifest || typeof safeExtension.manifest !== 'object') {
-                throw new Error('Invalid extension manifest');
-            }
-
-            let manifestString;
-            try {
-                manifestString = JSON.stringify(safeExtension.manifest);
-            } catch (error) {
-                console.error('Failed to stringify manifest for extension:', safeExtension.id, error);
-                throw new Error(`Failed to serialize manifest: ${error.message}`);
-            }
-
-            const escapedCurrentUrl = currentUrl.replace(/'/g, "\\'");
-
-            let apiScript = `
-            (function() {
-                try {
-                    // Prevent double injection
-                    if (window.chrome && window.chrome._extensionId === '${safeExtension.id}') {
-                        console.log('Extension APIs already injected for ${safeExtension.id}');
-                        return;
-                    }
-                    
-                    console.log('Injecting extension APIs for ${safeExtension.id}');
-                    
-                    window.chrome = window.chrome || {};
-                    window.chrome._extensionId = '${safeExtension.id}';
-                    window.chrome._injectedAt = Date.now();
-            `;
-
-            if (!extension.electronId) {
-                apiScript += `
-                    // Runtime APIs
-                    window.chrome.runtime = window.chrome.runtime || {};
-                    window.chrome.runtime.id = '${safeExtension.id}';
-                    window.chrome.runtime.getManifest = function() {
-                        return ${manifestString};
-                    };
-                    window.chrome.runtime.getURL = function(path) {
-                        return 'chrome-extension-${safeExtension.id}://' + path;
-                    };
-                    window.chrome.runtime.sendMessage = function(message, callback) {
-                        console.log('Extension message:', message);
-                        if (callback) {
-                            setTimeout(() => callback({}), 0);
-                        }
-                        return Promise.resolve({});
-                    };
-                    
-                    // Extension APIs
-                    window.chrome.extension = window.chrome.extension || {};
-                    window.chrome.extension.getURL = window.chrome.runtime.getURL;
-                    
-                    // i18n APIs
-                    window.chrome.i18n = window.chrome.i18n || {};
-                    window.chrome.i18n.getMessage = function(key, substitutions) {
-                        return key;
-                    };
-                    
-                    // Storage APIs
-                    window.chrome.storage = window.chrome.storage || {};
-                    window.chrome.storage.local = window.chrome.storage.local || {};
-                    
-                    window.chrome.storage.local.get = function(...args) {
-                        let keys = null, callback = null;
-                        
-                        if (args.length === 0) {
-                            keys = null;
-                        } else if (args.length === 1) {
-                            if (typeof args[0] === 'function') {
-                                callback = args[0];
-                                keys = null;
-                            } else {
-                                keys = args[0];
-                            }
-                        } else if (args.length === 2) {
-                            keys = args[0];
-                            callback = args[1];
-                        }
-                        
-                        const handleResult = (result) => {
-                            if (callback) {
-                                setTimeout(() => callback(result), 0);
-                            }
-                            return result;
-                        };
-                        
-                        if (window.electronAPI && window.electronAPI.extensionStorageGet) {
-                            const promise = window.electronAPI.extensionStorageGet('${safeExtension.id}', keys);
-                            if (callback) {
-                                promise.then(handleResult).catch(err => {
-                                    console.error('Storage get error:', err);
-                                    handleResult({});
-                                });
-                                return;
-                            }
-                            return promise;
-                        } else {
-                            const result = {};
-                            return Promise.resolve(handleResult(result));
-                        }
-                    };
-                    
-                    window.chrome.storage.local.set = function(...args) {
-                        let items = args[0] || {}, callback = args[1];
-                        
-                        if (args.length === 1 && typeof args[0] === 'function') {
-                            callback = args[0];
-                            items = {};
-                        }
-                        
-                        const handleSuccess = () => {
-                            if (callback) {
-                                setTimeout(callback, 0);
-                            }
-                        };
-                        
-                        if (window.electronAPI && window.electronAPI.extensionStorageSet) {
-                            const promise = window.electronAPI.extensionStorageSet('${safeExtension.id}', items);
-                            if (callback) {
-                                promise.then(handleSuccess).catch(err => {
-                                    console.error('Storage set error:', err);
-                                    handleSuccess();
-                                });
-                                return;
-                            }
-                            return promise;
-                        } else {
-                            setTimeout(handleSuccess, 0);
-                            return Promise.resolve();
-                        }
-                    };
-                    
-                    window.chrome.storage.local.remove = function(keys, callback) {
-                        // Simple implementation - in real scenario, you'd implement this in the main process
-                        if (callback) {
-                            setTimeout(callback, 0);
-                        }
-                        return Promise.resolve();
-                    };
-                    
-                    window.chrome.storage.local.clear = function(callback) {
-                        // Simple implementation - in real scenario, you'd implement this in the main process
-                        if (callback) {
-                            setTimeout(callback, 0);
-                        }
-                        return Promise.resolve();
-                    };
-                    
-                    // Browser compatibility
-                    if (!window.browser) {
-                        window.browser = window.chrome;
-                    }
-                `;
-            }
-
-            apiScript += `
-                    // Tabs API
-                    window.chrome.tabs = window.chrome.tabs || {};
-                    window.chrome.tabs.query = function(queryInfo, callback) {
-                        if (typeof queryInfo === 'function') {
-                            callback = queryInfo;
-                            queryInfo = {};
-                        }
-                        
-                        const getCurrentTab = () => {
-                            const currentUrl = '${escapedCurrentUrl}';
-                            const tabs = [];
-                            
-                            if (queryInfo.active !== false && queryInfo.currentWindow !== false && currentUrl) {
-                                tabs.push({
-                                    id: 1,
-                                    index: 0,
-                                    windowId: 1,
-                                    active: true,
-                                    url: currentUrl,
-                                    title: document.title || 'Current Tab',
-                                    favIconUrl: '',
-                                    status: 'complete'
-                                });
-                            }
-                            
-                            return tabs;
-                        };
-                        
-                        const result = getCurrentTab();
-                        if (callback) {
-                            setTimeout(() => callback(result), 0);
-                        }
-                        return Promise.resolve(result);
-                    };
-                    
-                    window.chrome.tabs.getCurrent = function(callback) {
-                        const result = undefined; // Content scripts don't have current tab
-                        if (callback) {
-                            setTimeout(() => callback(result), 0);
-                        }
-                        return Promise.resolve(result);
-                    };
-                    
-                    console.log('Extension APIs successfully injected for ${safeExtension.id}');
-                    
-                } catch (error) {
-                    console.error('Extension API injection failed for ${safeExtension.id}:', error);
-                }
-            })();
-            `;
-
-            await webContents.executeJavaScript(apiScript);
-            console.log('Successfully injected APIs for extension:', safeExtension.id);
+            if (!url || url === 'about:blank') return '';
+            const urlObj = new URL(url);
+            return urlObj.hostname || '';
         } catch (error) {
-            console.error('Failed to inject extension APIs for extension:', extension.id, error);
-            throw error;
+            return '';
+        }
+    }
+
+    getDomainFromUrl(url) {
+        try {
+            if (!url || url === 'about:blank') return '';
+            const hostname = this.getHostnameFromUrl(url);
+            return hostname.startsWith('www.') ? hostname.substring(4) : hostname;
+        } catch (error) {
+            return '';
+        }
+    }
+
+    getOriginFromUrl(url) {
+        try {
+            if (!url || url === 'about:blank') return '';
+            const urlObj = new URL(url);
+            return urlObj.origin || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    getProtocolFromUrl(url) {
+        try {
+            if (!url || url === 'about:blank') return '';
+            const urlObj = new URL(url);
+            return urlObj.protocol || '';
+        } catch (error) {
+            return '';
         }
     }
 
@@ -382,7 +528,6 @@ class ExtensionManager {
 
             const extensionId = this.generateExtensionId(manifest.name);
 
-            // Check if extension is already loaded
             if (this.extensions.has(extensionId)) {
                 console.log('Extension already loaded, unloading first:', extensionId);
                 await this.unloadExtension(extensionId);
@@ -408,7 +553,6 @@ class ExtensionManager {
                 loadedAt: new Date().toISOString()
             };
 
-            // Try to load with Electron's extension system
             try {
                 const loadedExtension = await session.defaultSession.loadExtension(extensionPath, {
                     allowFileAccess: true
@@ -424,7 +568,6 @@ class ExtensionManager {
 
             await this.setupExtensionProtocol(extension);
 
-            // Save configuration after successful load
             this.saveConfiguration();
 
             console.log('Extension loaded successfully:', extension.name, 'v' + extension.version);
@@ -502,22 +645,21 @@ class ExtensionManager {
             const success = protocol.registerFileProtocol(extensionScheme, (request, callback) => {
                 const url = request.url.replace(`${extensionScheme}://`, '');
                 const filePath = path.join(extension.path, url);
-                
-                // Security check - ensure file is within extension directory
+
                 const resolvedPath = path.resolve(filePath);
                 const extensionDir = path.resolve(extension.path);
-                
+
                 if (!resolvedPath.startsWith(extensionDir)) {
                     console.warn('Attempted to access file outside extension directory:', resolvedPath);
-                    callback({ error: -6 }); // FILE_NOT_FOUND
+                    callback({ error: -6 });
                     return;
                 }
-                
+
                 if (fs.existsSync(resolvedPath)) {
                     callback({ path: resolvedPath });
                 } else {
                     console.warn('Extension file not found:', resolvedPath);
-                    callback({ error: -6 }); // FILE_NOT_FOUND
+                    callback({ error: -6 });
                 }
             });
 
@@ -529,169 +671,6 @@ class ExtensionManager {
             }
         } catch (error) {
             console.error('Error registering protocol:', extensionScheme, error);
-        }
-    }
-
-    async showExtensionPopup(extensionId, parentWindow, currentUrl = '') {
-        console.log('showExtensionPopup called with extensionId:', extensionId);
-
-        const extension = this.extensions.get(extensionId);
-        if (!extension || !extension.popup) {
-            console.log('No popup defined for extension:', extensionId);
-            return { success: false, error: 'No popup defined for extension' };
-        }
-
-        // Fix: Derive currentUrl from parentWindow if not provided
-        if (!currentUrl && parentWindow && parentWindow.webContents) {
-            try {
-                currentUrl = parentWindow.webContents.getURL();
-                console.log('Derived currentUrl from parentWindow:', currentUrl);
-            } catch (error) {
-                console.warn('Failed to derive currentUrl from parentWindow:', error.message);
-                currentUrl = '';  // Fallback to empty if derivation fails
-            }
-        }
-
-        // Optional: Warn if still empty (helps catch caller issues)
-        if (!currentUrl) {
-            console.warn(`No currentUrl provided or derived for extension popup (${extensionId}). Tabs API may return empty URL.`);
-        }
-
-        if (this.popupWindows.has(extensionId)) {
-            console.log('Closing existing popup for extension:', extensionId);
-            try {
-                const existingWindow = this.popupWindows.get(extensionId);
-                if (!existingWindow.isDestroyed()) {
-                    existingWindow.close();
-                }
-            } catch (error) {
-                console.warn('Error closing existing popup:', error.message);
-            }
-            this.popupWindows.delete(extensionId);
-        }
-
-        const popupPath = path.join(extension.path, extension.popup);
-        if (!fs.existsSync(popupPath)) {
-            console.error('Popup file not found:', popupPath);
-            return { success: false, error: 'Popup file not found' };
-        }
-
-        try {
-            const popupWindow = new BrowserWindow({
-                width: 400,
-                height: 600,
-                parent: parentWindow,
-                modal: false,
-                resizable: false,
-                show: false,
-                webPreferences: {
-                    nodeIntegration: false,
-                    contextIsolation: true,
-                    enableRemoteModule: false,
-                    webSecurity: false,
-                    allowRunningInsecureContent: true,
-                    preload: path.join(__dirname, 'extension-preload.js')
-                }
-            });
-
-            let loadUrl;
-            if (extension.electronId) {
-                loadUrl = `chrome-extension://${extension.electronId}/${extension.popup}`;
-            } else {
-                loadUrl = `chrome-extension-${extension.id}://${extension.popup}`;
-            }
-
-            popupWindow.webContents.once('dom-ready', async () => {
-                try {
-                    await this.injectExtensionAPIs(popupWindow.webContents, extension, currentUrl, true);
-                    console.log('Successfully injected APIs for popup');
-                } catch (error) {
-                    console.error('Failed to inject APIs for popup:', error);
-                }
-            });
-
-            await popupWindow.loadURL(loadUrl);
-
-            setTimeout(async () => {
-                try {
-                    if (!popupWindow.isDestroyed()) {
-                        const sizeCode = `
-                            JSON.stringify({
-                                width: Math.max(200, Math.min(800, Math.ceil(document.documentElement.scrollWidth))),
-                                height: Math.max(200, Math.min(600, Math.ceil(document.documentElement.scrollHeight)))
-                            })
-                        `;
-                        const sizeJson = await popupWindow.webContents.executeJavaScript(sizeCode);
-                        const parsedSize = JSON.parse(sizeJson);
-                        popupWindow.setSize(parsedSize.width, parsedSize.height);
-                        popupWindow.center();
-                        popupWindow.show();
-                    }
-                } catch (error) {
-                    console.error('Error resizing popup:', error);
-                    if (!popupWindow.isDestroyed()) {
-                        popupWindow.show();
-                    }
-                }
-            }, 100);
-
-            popupWindow.on('closed', () => {
-                console.log('Popup window closed for extension:', extensionId);
-                this.popupWindows.delete(extensionId);
-            });
-
-            this.popupWindows.set(extensionId, popupWindow);
-            return { success: true };
-        } catch (error) {
-            console.error('Error in showExtensionPopup:', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    async unloadExtension(extensionId) {
-        const extension = this.extensions.get(extensionId);
-        if (extension) {
-            if (this.popupWindows.has(extensionId)) {
-                try {
-                    const popupWindow = this.popupWindows.get(extensionId);
-                    if (!popupWindow.isDestroyed()) {
-                        popupWindow.close();
-                    }
-                } catch (error) {
-                    console.warn('Error closing popup during unload:', error.message);
-                }
-                this.popupWindows.delete(extensionId);
-            }
-
-            if (extension.electronId) {
-                try {
-                    await session.defaultSession.removeExtension(extension.electronId);
-                } catch (error) {
-                    console.warn('Failed to remove extension from session:', error.message);
-                }
-            }
-
-            const extensionScheme = `chrome-extension-${extension.id}`;
-            if (this.registeredProtocols.has(extensionScheme)) {
-                try {
-                    protocol.unregisterProtocol(extensionScheme);
-                    this.registeredProtocols.delete(extensionScheme);
-                } catch (error) {
-                    console.warn('Failed to unregister protocol:', error.message);
-                }
-            }
-
-            if (this.extensionStores.has(extensionId)) {
-                this.extensionStores.delete(extensionId);
-            }
-
-            this.extensions.delete(extensionId);
-            this.loadedExtensions.delete(extensionId);
-
-            // Update saved configuration
-            this.saveConfiguration();
-
-            console.log('Extension unloaded:', extension.name);
         }
     }
 
@@ -729,7 +708,6 @@ class ExtensionManager {
                         }
 
                         if (script.js) {
-                            await this.injectExtensionAPIs(webview, extension, url);
                             for (const jsFile of script.js) {
                                 try {
                                     const jsContent = await window.electronAPI.getExtensionFileContent(extension.id, jsFile);
@@ -772,27 +750,6 @@ class ExtensionManager {
             console.error('Invalid pattern:', pattern, error);
             return false;
         }
-    }
-
-    async cleanup() {
-        console.log('Cleaning up ExtensionManager...');
-        
-        for (const [extensionId, popupWindow] of this.popupWindows) {
-            try {
-                if (!popupWindow.isDestroyed()) {
-                    popupWindow.close();
-                }
-            } catch (error) {
-                console.warn('Error closing popup during cleanup:', error.message);
-            }
-        }
-        this.popupWindows.clear();
-
-        for (const extensionId of this.extensions.keys()) {
-            await this.unloadExtension(extensionId);
-        }
-
-        console.log('ExtensionManager cleanup complete');
     }
 }
 

@@ -1,9 +1,14 @@
-// Modified WebviewEvents.js - Direct event distribution instead of queue-based
+// Fixed WebviewEvents.js - Proper resource management with working events
 export class WebviewEvents {
     constructor(app) {
         this.app = app;
         this.eventListeners = new Map();
         this.addressBarTimeout = null;
+        this.debounceTimers = new Map();
+        this.cleanupInterval = null;
+        
+        // Start periodic cleanup
+        this.startPeriodicCleanup();
     }
 
     async startEventListening(webview, tabId) {
@@ -15,7 +20,9 @@ export class WebviewEvents {
             keyPromise: null,
             mousePromise: null,
             scrollPromise: null,
-            injected: false
+            injected: false,
+            lastActivity: Date.now(),
+            abortController: new AbortController()
         };
 
         this.eventListeners.set(tabId, listenerObj);
@@ -26,8 +33,8 @@ export class WebviewEvents {
             // Wait for page to be ready before injection
             await this.waitForPageReady(webview);
 
-            // Use direct event listeners approach
-            this.startDirectEventListening(webview, tabId);
+            // Use the polling approach but with better resource management
+            this.startManagedEventListening(webview, tabId);
 
         } catch (error) {
             console.error(`Event listening failed for tab ${tabId}:`, error);
@@ -37,30 +44,37 @@ export class WebviewEvents {
 
     async waitForPageReady(webview) {
         try {
-            await webview.executeJavaScript(`
-                new Promise((resolve) => {
-                    if (document.readyState === 'complete') {
-                        resolve();
-                    } else {
-                        window.addEventListener('load', resolve);
-                        // Fallback timeout
-                        setTimeout(resolve, 2000);
-                    }
-                })
-            `);
+            await Promise.race([
+                webview.executeJavaScript(`
+                    new Promise((resolve) => {
+                        if (document.readyState === 'complete') {
+                            resolve();
+                        } else {
+                            const handler = () => {
+                                window.removeEventListener('load', handler);
+                                resolve();
+                            };
+                            window.addEventListener('load', handler);
+                        }
+                    })
+                `),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Page ready timeout')), 2000)
+                )
+            ]);
         } catch (error) {
             console.log('Page ready check failed, continuing anyway:', error.message);
         }
     }
 
-    async startDirectEventListening(webview, tabId) {
+    async startManagedEventListening(webview, tabId) {
         const listener = this.eventListeners.get(tabId);
         if (!listener) return;
 
-        // Start all event listeners in parallel
-        listener.keyPromise = this.createKeyEventListener(webview, tabId);
-        listener.mousePromise = this.createMouseEventListener(webview, tabId);
-        listener.scrollPromise = this.createScrollEventListener(webview, tabId);
+        // Start all event listeners with proper error handling and cleanup
+        listener.keyPromise = this.createManagedKeyEventListener(webview, tabId);
+        listener.mousePromise = this.createManagedMouseEventListener(webview, tabId);
+        listener.scrollPromise = this.createManagedScrollEventListener(webview, tabId);
 
         // Handle cleanup when any promise completes/fails
         Promise.allSettled([
@@ -69,22 +83,24 @@ export class WebviewEvents {
             listener.scrollPromise
         ]).then(() => {
             console.log(`All event listeners completed for tab ${tabId}`);
-        }).catch(error => {
-            console.log(`Event listening ended for tab ${tabId}:`, error.message);
         });
     }
 
-    async createKeyEventListener(webview, tabId) {
-        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId).active) {
+    async createManagedKeyEventListener(webview, tabId) {
+        let consecutiveErrors = 0;
+        const maxErrors = 5;
+        let backoffDelay = 1000;
+
+        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId)?.active) {
             const listener = this.eventListeners.get(tabId);
             if (!listener || !listener.active) break;
 
             try {
                 const keyEvent = await Promise.race([
                     webview.executeJavaScript(`
-                        new Promise((resolve, reject) => {
+                        new Promise((resolve) => {
                             const timeoutId = setTimeout(() => {
-                                reject(new Error('Key event timeout'));
+                                resolve({ type: 'timeout' });
                             }, 2000);
 
                             const eventHandler = (e) => {
@@ -125,39 +141,64 @@ export class WebviewEvents {
                             document.addEventListener("keyup", eventHandler);
                         })
                     `),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('External timeout')), 3000)
+                    new Promise((resolve) =>
+                        setTimeout(() => resolve({ type: 'timeout' }), 3000)
                     )
                 ]);
 
-                // Process the event directly
-                this.processEvent(keyEvent, webview, tabId);
-
-            } catch (error) {
-                if (error.message.includes('timeout')) {
+                // Handle timeout responses
+                if (keyEvent.type === 'timeout') {
                     continue;
                 }
+
+                // Reset error count on success
+                consecutiveErrors = 0;
+                backoffDelay = 1000;
+
+                // Update activity and process event
+                if (listener.active) {
+                    listener.lastActivity = Date.now();
+                    this.processEvent(keyEvent, webview, tabId);
+                }
+
+            } catch (error) {
                 if (error.message.includes('destroyed') || error.message.includes('crashed')) {
                     console.log(`Webview destroyed, stopping key listener for tab ${tabId}`);
                     break;
                 }
-                console.log(`Key event error for tab ${tabId}:`, error.message);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                consecutiveErrors++;
+                if (consecutiveErrors >= maxErrors) {
+                    console.log(`Too many consecutive errors for key listener tab ${tabId}, stopping`);
+                    break;
+                }
+
+                console.log(`Key event error for tab ${tabId} (${consecutiveErrors}/${maxErrors}):`, error.message);
+                
+                // Exponential backoff with jitter
+                const jitter = Math.random() * 500;
+                await new Promise(resolve => setTimeout(resolve, Math.min(backoffDelay + jitter, 5000)));
+                backoffDelay = Math.min(backoffDelay * 1.5, 5000);
             }
         }
+        console.log(`Key event listener stopped for tab ${tabId}`);
     }
 
-    async createMouseEventListener(webview, tabId) {
-        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId).active) {
+    async createManagedMouseEventListener(webview, tabId) {
+        let consecutiveErrors = 0;
+        const maxErrors = 5;
+        let backoffDelay = 1000;
+
+        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId)?.active) {
             const listener = this.eventListeners.get(tabId);
             if (!listener || !listener.active) break;
 
             try {
                 const mouseEvent = await Promise.race([
                     webview.executeJavaScript(`
-                        new Promise((resolve, reject) => {
+                        new Promise((resolve) => {
                             const timeoutId = setTimeout(() => {
-                                reject(new Error('Mouse event timeout'));
+                                resolve({ type: 'timeout' });
                             }, 2000);
 
                             const eventHandler = (e) => {
@@ -189,39 +230,62 @@ export class WebviewEvents {
                             document.addEventListener("click", eventHandler);
                         })
                     `),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('External timeout')), 3000)
+                    new Promise((resolve) =>
+                        setTimeout(() => resolve({ type: 'timeout' }), 3000)
                     )
                 ]);
 
-                // Process the event directly
-                this.processEvent(mouseEvent, webview, tabId);
-
-            } catch (error) {
-                if (error.message.includes('timeout')) {
+                // Handle timeout responses
+                if (mouseEvent.type === 'timeout') {
                     continue;
                 }
+
+                consecutiveErrors = 0;
+                backoffDelay = 1000;
+
+                if (listener.active) {
+                    listener.lastActivity = Date.now();
+                    this.processEvent(mouseEvent, webview, tabId);
+                }
+
+            } catch (error) {
                 if (error.message.includes('destroyed') || error.message.includes('crashed')) {
                     console.log(`Webview destroyed, stopping mouse listener for tab ${tabId}`);
                     break;
                 }
-                console.log(`Mouse event error for tab ${tabId}:`, error.message);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                consecutiveErrors++;
+                if (consecutiveErrors >= maxErrors) {
+                    console.log(`Too many consecutive errors for mouse listener tab ${tabId}, stopping`);
+                    break;
+                }
+
+                console.log(`Mouse event error for tab ${tabId} (${consecutiveErrors}/${maxErrors}):`, error.message);
+                
+                const jitter = Math.random() * 500;
+                await new Promise(resolve => setTimeout(resolve, Math.min(backoffDelay + jitter, 5000)));
+                backoffDelay = Math.min(backoffDelay * 1.5, 5000);
             }
         }
+        console.log(`Mouse event listener stopped for tab ${tabId}`);
     }
 
-    async createScrollEventListener(webview, tabId) {
-        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId).active) {
+    async createManagedScrollEventListener(webview, tabId) {
+        let consecutiveErrors = 0;
+        const maxErrors = 5;
+        let backoffDelay = 1000;
+        let lastScrollTime = 0;
+
+        while (this.eventListeners.has(tabId) && this.eventListeners.get(tabId)?.active) {
             const listener = this.eventListeners.get(tabId);
             if (!listener || !listener.active) break;
 
             try {
                 const scrollEvent = await Promise.race([
                     webview.executeJavaScript(`
-                        new Promise((resolve, reject) => {
+                        new Promise((resolve) => {
                             const timeoutId = setTimeout(() => {
-                                reject(new Error('Scroll event timeout'));
+                                resolve({ type: 'timeout' });
                             }, 2000);
 
                             let wheelHandler, scrollHandler;
@@ -287,42 +351,63 @@ export class WebviewEvents {
                             };
                             
                             document.addEventListener("wheel", wheelHandler, { passive: true });
-                            document.addEventListener("scroll", scrollHandler, true);
+                            document.addEventListener("scroll", scrollHandler, { passive: true, capture: true });
                         })
                     `),
-                    new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('External timeout')), 3000)
+                    new Promise((resolve) =>
+                        setTimeout(() => resolve({ type: 'timeout' }), 3000)
                     )
                 ]);
 
-                // Process the event directly
-                this.processEvent(scrollEvent, webview, tabId);
-
-            } catch (error) {
-                if (error.message.includes('timeout')) {
+                // Handle timeout responses
+                if (scrollEvent.type === 'timeout') {
                     continue;
                 }
+
+                consecutiveErrors = 0;
+                backoffDelay = 1000;
+
+                if (listener.active) {
+                    listener.lastActivity = Date.now();
+                    
+                    // Throttle scroll events to prevent overwhelming
+                    const now = Date.now();
+                    if (now - lastScrollTime > 16) { // ~60fps max
+                        this.processEvent(scrollEvent, webview, tabId);
+                        lastScrollTime = now;
+                    }
+                }
+
+            } catch (error) {
                 if (error.message.includes('destroyed') || error.message.includes('crashed')) {
                     console.log(`Webview destroyed, stopping scroll listener for tab ${tabId}`);
                     break;
                 }
-                console.log(`Scroll event error for tab ${tabId}:`, error.message);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                consecutiveErrors++;
+                if (consecutiveErrors >= maxErrors) {
+                    console.log(`Too many consecutive errors for scroll listener tab ${tabId}, stopping`);
+                    break;
+                }
+
+                console.log(`Scroll event error for tab ${tabId} (${consecutiveErrors}/${maxErrors}):`, error.message);
+                
+                const jitter = Math.random() * 500;
+                await new Promise(resolve => setTimeout(resolve, Math.min(backoffDelay + jitter, 5000)));
+                backoffDelay = Math.min(backoffDelay * 1.5, 5000);
             }
         }
+        console.log(`Scroll event listener stopped for tab ${tabId}`);
     }
 
-    // Unified event processing method
+    // Unified event processing method with debouncing
     processEvent(eventData, webview, tabId) {
         const currentWebview = document.getElementById(`webview-${this.app.activeTabId}`);
         const isActiveWebview = currentWebview && currentWebview === webview;
 
         if (!isActiveWebview || document.activeElement !== webview) {
-            console.log(`Skipping event for inactive webview ${tabId}`);
             return;
         }
-
-        console.log(`Processing ${eventData.type} event for active webview ${tabId}`);
 
         try {
             // Handle hotkeys first
@@ -332,16 +417,8 @@ export class WebviewEvents {
                 return;
             }
 
-            // Send to main process via IPC
-            if (window.electronAPI) {
-                if (eventData.type === 'keyboard' && window.electronAPI.sendWebviewKeyEvent) {
-                    window.electronAPI.sendWebviewKeyEvent(tabId, eventData);
-                } else if (eventData.type === 'mouse' && window.electronAPI.sendWebviewMouseEvent) {
-                    window.electronAPI.sendWebviewMouseEvent(tabId, eventData);
-                } else if (eventData.type === 'scroll' && window.electronAPI.sendWebviewScrollEvent) {
-                    window.electronAPI.sendWebviewScrollEvent(tabId, eventData);
-                }
-            }
+            // Send to main process via IPC with debouncing
+            this.debouncedIpcSend(eventData, tabId);
 
             // Dispatch to main window
             if (eventData.type === 'scroll') {
@@ -355,14 +432,47 @@ export class WebviewEvents {
         }
     }
 
-    // Fixed dispatchScrollEvent method in WebviewEvents.js
-    dispatchScrollEvent(eventData, tabId) {
-        console.log("Dispatching scroll event");
+    debouncedIpcSend(eventData, tabId) {
+        // Only debounce scroll events to reduce IPC overhead
+        if (eventData.type !== 'scroll') {
+            this.sendIpcEvent(eventData, tabId);
+            return;
+        }
 
+        const key = `${tabId}-scroll-ipc`;
+        
+        if (this.debounceTimers.has(key)) {
+            clearTimeout(this.debounceTimers.get(key));
+        }
+
+        const timer = setTimeout(() => {
+            this.sendIpcEvent(eventData, tabId);
+            this.debounceTimers.delete(key);
+        }, 50);
+
+        this.debounceTimers.set(key, timer);
+    }
+
+    sendIpcEvent(eventData, tabId) {
+        if (window.electronAPI) {
+            try {
+                if (eventData.type === 'keyboard' && window.electronAPI.sendWebviewKeyEvent) {
+                    window.electronAPI.sendWebviewKeyEvent(tabId, eventData);
+                } else if (eventData.type === 'mouse' && window.electronAPI.sendWebviewMouseEvent) {
+                    window.electronAPI.sendWebviewMouseEvent(tabId, eventData);
+                } else if (eventData.type === 'scroll' && window.electronAPI.sendWebviewScrollEvent) {
+                    window.electronAPI.sendWebviewScrollEvent(tabId, eventData);
+                }
+            } catch (error) {
+                console.error('IPC send error:', error);
+            }
+        }
+    }
+
+    dispatchScrollEvent(eventData, tabId) {
         let customEvent;
 
         if (eventData.eventType === 'wheel') {
-            // Create a custom event instead of WheelEvent to ensure sourceTabId is preserved
             customEvent = new CustomEvent('wheel', {
                 bubbles: true,
                 cancelable: true,
@@ -381,32 +491,14 @@ export class WebviewEvents {
                 }
             });
 
-            // Add properties directly to the event object for compatibility
-            Object.defineProperty(customEvent, 'deltaY', {
-                value: eventData.deltaY || 0,
-                writable: false,
-                enumerable: true
-            });
-            Object.defineProperty(customEvent, 'deltaX', {
-                value: eventData.deltaX || 0,
-                writable: false,
-                enumerable: true
-            });
-            Object.defineProperty(customEvent, 'sourceTabId', {
-                value: tabId,
-                writable: false,
-                enumerable: true
-            });
-            Object.defineProperty(customEvent, 'scrollTop', {
-                value: eventData.scrollTop || 0,
-                writable: false,
-                enumerable: true
+            Object.defineProperties(customEvent, {
+                deltaY: { value: eventData.deltaY || 0, writable: false, enumerable: true },
+                deltaX: { value: eventData.deltaX || 0, writable: false, enumerable: true },
+                sourceTabId: { value: tabId, writable: false, enumerable: true },
+                scrollTop: { value: eventData.scrollTop || 0, writable: false, enumerable: true }
             });
 
         } else if (eventData.eventType === 'scroll') {
-
-            console.log("event distibuted")
-
             customEvent = new CustomEvent('webview-scroll', {
                 bubbles: true,
                 detail: {
@@ -426,15 +518,7 @@ export class WebviewEvents {
                 writable: false,
                 enumerable: true
             });
-
             window.dispatchEvent(customEvent);
-
-            console.log(`Dispatched ${eventData.eventType} event from webview tab ${tabId}`, {
-                deltaY: eventData.deltaY,
-                scrollTop: eventData.scrollTop,
-                eventType: eventData.eventType,
-                hasSourceTabId: !!customEvent.sourceTabId
-            });
         }
     }
 
@@ -467,15 +551,9 @@ export class WebviewEvents {
         }
 
         if (customEvent) {
-            Object.defineProperty(customEvent, 'sourceTabId', {
-                value: tabId,
-                writable: false,
-                enumerable: true
-            });
-            Object.defineProperty(customEvent, 'sourceTarget', {
-                value: eventData.target,
-                writable: false,
-                enumerable: true
+            Object.defineProperties(customEvent, {
+                sourceTabId: { value: tabId, writable: false, enumerable: true },
+                sourceTarget: { value: eventData.target, writable: false, enumerable: true }
             });
             window.dispatchEvent(customEvent);
         }
@@ -496,11 +574,42 @@ export class WebviewEvents {
         }
     }
 
+    startPeriodicCleanup() {
+        this.cleanupInterval = setInterval(() => {
+            const now = Date.now();
+            const timeout = 10 * 60 * 1000; // 10 minutes
+
+            for (const [tabId, listener] of this.eventListeners.entries()) {
+                if (!listener.active || (now - listener.lastActivity > timeout)) {
+                    console.log(`Cleaning up inactive listener for tab ${tabId}`);
+                    this.stopEventListening(tabId);
+                }
+            }
+
+            // Clear orphaned debounce timers
+            for (const [key, timer] of this.debounceTimers.entries()) {
+                const tabId = key.split('-')[0];
+                if (!this.eventListeners.has(tabId)) {
+                    clearTimeout(timer);
+                    this.debounceTimers.delete(key);
+                }
+            }
+        }, 60000); // Run every minute
+    }
+
     stopEventListening(tabId) {
         const listener = this.eventListeners.get(tabId);
         if (listener) {
             console.log(`Stopping event listening for tab ${tabId}`);
             listener.active = false;
+
+            // Clear any debounce timers for this tab
+            for (const [key, timer] of this.debounceTimers.entries()) {
+                if (key.startsWith(`${tabId}-`)) {
+                    clearTimeout(timer);
+                    this.debounceTimers.delete(key);
+                }
+            }
 
             if (this.addressBarTimeout) {
                 clearTimeout(this.addressBarTimeout);
@@ -518,13 +627,26 @@ export class WebviewEvents {
 
     debugListeners() {
         console.log('Active event listeners:');
+        const now = Date.now();
         for (const [tabId, listener] of this.eventListeners.entries()) {
-            console.log(`Tab ${tabId}: active=${listener.active}, webview=${!!listener.webview}`);
+            const lastActivityAgo = now - listener.lastActivity;
+            console.log(`Tab ${tabId}: active=${listener.active}, webview=${!!listener.webview}, lastActivity=${Math.round(lastActivityAgo/1000)}s ago`);
         }
+        console.log(`Debounce timers: ${this.debounceTimers.size}`);
     }
 
     cleanup() {
         console.log('WebviewEvents: Starting cleanup...');
+
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
+
+        for (const timer of this.debounceTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.debounceTimers.clear();
 
         for (const tabId of this.eventListeners.keys()) {
             this.stopEventListening(tabId);

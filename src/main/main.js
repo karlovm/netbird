@@ -70,15 +70,264 @@ class NetBirdBrowser {
 
     mainWindow.webContents.on("did-attach-webview", (_, contents) => {
       contents.setWindowOpenHandler((details) => {
+        const url = details.url;
+        const features = details.features || '';
+        const disposition = details.disposition;
 
-        let url = details.url;
-        if (url.length > 0) {
-          mainWindow.webContents.send('create-new-tab', { url: url });
+        // Check if this should be treated as a popup
+        const isPopup = shouldTreatAsPopup(url, features, disposition);
+
+        if (isPopup) {
+          // Allow popup to open in a new window
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              width: getPopupWidth(features),
+              height: getPopupHeight(features),
+              x: getPopupX(features),
+              y: getPopupY(features),
+              modal: false,
+              resizable: true,
+              minimizable: true,
+              maximizable: true,
+              closable: true,
+              alwaysOnTop: false,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                enableRemoteModule: false,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
+                experimentalFeatures: false
+              }
+            }
+          };
+        } else {
+          // Open in new tab
+          if (url.length > 0) {
+            mainWindow.webContents.send('create-new-tab', { url: url });
+          }
+          return { action: 'deny' };
         }
+      });
+    });
 
-        return { action: 'deny' }
-      })
-    })
+    function shouldTreatAsPopup(url, features, disposition) {
+      // Known popup patterns
+      const popupPatterns = [
+        // Google OAuth and sign-in
+        /accounts\.google\.com\/oauth/,
+        /accounts\.google\.com\/signin/,
+        /accounts\.google\.com\/ServiceLogin/,
+        /accounts\.google\.com\/AccountChooser/,
+
+        // Facebook OAuth
+        /www\.facebook\.com\/dialog\/oauth/,
+        /www\.facebook\.com\/login\.php/,
+
+        // Twitter OAuth
+        /api\.twitter\.com\/oauth/,
+        /twitter\.com\/oauth/,
+
+        // Microsoft OAuth
+        /login\.microsoftonline\.com/,
+        /login\.live\.com/,
+
+        // GitHub OAuth
+        /github\.com\/login\/oauth/,
+
+        // LinkedIn OAuth
+        /www\.linkedin\.com\/oauth/,
+
+        // Generic OAuth patterns
+        /\/oauth\/authorize/,
+        /\/oauth\/login/,
+        /\/auth\/login/,
+        /\/login\/oauth/,
+
+        // Payment gateways
+        /checkout\.stripe\.com/,
+        /www\.paypal\.com\/checkoutnow/,
+        /www\.paypal\.com\/cgi-bin\/webscr/,
+
+        // Other common popup patterns
+        /\/popup/,
+        /\/modal/,
+        /\/auth/,
+        /\/login/,
+        /\/signin/,
+        /\/callback/
+      ];
+
+      // Check URL patterns
+      const urlMatches = popupPatterns.some(pattern => pattern.test(url));
+
+      // Check window features for popup characteristics
+      const hasPopupFeatures = features && (
+        features.includes('popup') ||
+        features.includes('dialog') ||
+        features.includes('modal') ||
+        (features.includes('width') && features.includes('height')) ||
+        features.includes('toolbar=no') ||
+        features.includes('menubar=no') ||
+        features.includes('location=no') ||
+        features.includes('status=no') ||
+        features.includes('resizable=no') ||
+        features.includes('scrollbars=no')
+      );
+
+      // Check disposition
+      const isPopupDisposition = disposition === 'new-window' || disposition === 'popup';
+
+      // Additional checks for common popup characteristics
+      const hasPopupQuery = url.includes('popup=1') ||
+        url.includes('modal=1') ||
+        url.includes('auth=1') ||
+        url.includes('oauth=1');
+
+      // Check if URL has typical popup parameters
+      const hasAuthParams = url.includes('client_id=') ||
+        url.includes('response_type=') ||
+        url.includes('redirect_uri=') ||
+        url.includes('scope=') ||
+        url.includes('state=');
+
+      return urlMatches || hasPopupFeatures || isPopupDisposition || hasPopupQuery || hasAuthParams;
+    }
+
+    function getPopupWidth(features) {
+      const match = features.match(/width=(\d+)/);
+      return match ? parseInt(match[1]) : 500;
+    }
+
+    function getPopupHeight(features) {
+      const match = features.match(/height=(\d+)/);
+      return match ? parseInt(match[1]) : 600;
+    }
+
+    function getPopupX(features) {
+      const match = features.match(/left=(\d+)/);
+      if (match) return parseInt(match[1]);
+
+      // Center horizontally if no position specified
+      const { screen } = require('electron');
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width } = primaryDisplay.workAreaSize;
+      const popupWidth = getPopupWidth(features);
+      return Math.round((width - popupWidth) / 2);
+    }
+
+    function getPopupY(features) {
+      const match = features.match(/top=(\d+)/);
+      if (match) return parseInt(match[1]);
+
+      // Center vertically if no position specified
+      const { screen } = require('electron');
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { height } = primaryDisplay.workAreaSize;
+      const popupHeight = getPopupHeight(features);
+      return Math.round((height - popupHeight) / 2);
+    }
+
+    // Optional: Add popup window management
+    const activePopups = new Set();
+
+    mainWindow.webContents.on("did-attach-webview", (_, contents) => {
+      contents.setWindowOpenHandler((details) => {
+        const url = details.url;
+        const features = details.features || '';
+        const disposition = details.disposition;
+
+        const isPopup = shouldTreatAsPopup(url, features, disposition);
+
+        if (isPopup) {
+          return {
+            action: 'allow',
+            overrideBrowserWindowOptions: {
+              width: getPopupWidth(features),
+              height: getPopupHeight(features),
+              x: getPopupX(features),
+              y: getPopupY(features),
+              modal: false,
+              resizable: true,
+              minimizable: true,
+              maximizable: true,
+              closable: true,
+              alwaysOnTop: false,
+              show: true,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                enableRemoteModule: false,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
+                experimentalFeatures: false
+              }
+            }
+          };
+        } else {
+          if (url.length > 0) {
+            mainWindow.webContents.send('create-new-tab', { url: url });
+          }
+          return { action: 'deny' };
+        }
+      });
+
+      // Track popup windows
+      contents.on('did-create-window', (window) => {
+        activePopups.add(window);
+
+        window.on('closed', () => {
+          activePopups.delete(window);
+        });
+
+        // Optional: Handle popup communication back to parent
+        window.webContents.on('will-navigate', (event, url) => {
+          // Check if this is a callback URL that should close the popup
+          if (isCallbackUrl(url)) {
+            // Send callback data to parent window
+            const params = new URL(url).searchParams;
+            mainWindow.webContents.send('popup-callback', {
+              url: url,
+              params: Object.fromEntries(params)
+            });
+
+            // Close popup after callback
+            setTimeout(() => {
+              if (!window.isDestroyed()) {
+                window.close();
+              }
+            }, 1000);
+          }
+        });
+      });
+    });
+
+    function isCallbackUrl(url) {
+      const callbackPatterns = [
+        /\/callback/,
+        /\/auth\/callback/,
+        /\/oauth\/callback/,
+        /\/login\/callback/,
+        /\/signin\/callback/,
+        /code=/,
+        /access_token=/,
+        /oauth_token=/,
+        /state=/
+      ];
+
+      return callbackPatterns.some(pattern => pattern.test(url));
+    }
+
+    // Clean up popups on app quit
+    app.on('before-quit', () => {
+      activePopups.forEach(popup => {
+        if (!popup.isDestroyed()) {
+          popup.close();
+        }
+      });
+      activePopups.clear();
+    });
 
     mainWindow.on('closed', () => {
       this.windows.delete('main');
@@ -93,7 +342,25 @@ class NetBirdBrowser {
     return mainWindow;
   }
 
+
+
   setupIPC() {
+    ipcMain.on('get-popup-extension-data', (event) => {
+    try {
+        event.returnValue = currentPopupContext || {
+            extensionId: 'unknown',
+            currentUrl: 'about:blank',
+            manifest: {}
+        };
+    } catch (error) {
+        console.error('Error getting popup extension data:', error);
+        event.returnValue = {
+            extensionId: 'unknown',
+            currentUrl: 'about:blank',
+            manifest: {}
+        };
+    }
+});
 
 
     // Webview key event handler
